@@ -288,7 +288,7 @@ var SERIES=['#17786F','#2E6E93','#C9A75C','#6F9E86','#8390A6','#B4785E'];
 /* ---------- state ---------- */
 function seed(){
   return {v:4,updatedAt:0,
-    settings:{usdthb:32.79,startDate:'2026-09-01',autoPrice:true,lastAuto:''},
+    settings:{usdthb:32.79,startDate:'2026-09-01',autoPrice:true,lastAuto:'',view:'auto'},
     profile:{
       salary:0,sso:0,pvdM:0,kyst:0,
       fixed:[{id:'f1',n:'ค่าหอ',v:0},{id:'f2',n:'ค่ามือถือ',v:0},{id:'f3',n:'ใช้หนี้',v:0},
@@ -336,6 +336,7 @@ function migrate(s){
   if(!s.settings.usdthb)s.settings.usdthb=32.79;
   if(!s.settings.startDate)s.settings.startDate=base.settings.startDate;
   if(s.settings.autoPrice===undefined)s.settings.autoPrice=true;
+  if(!s.settings.view)s.settings.view='auto';
   if(s.profile&&s.profile.bal&&s.profile.bal.wht===undefined)s.profile.bal.wht=base.profile.bal.wht;
   if(s.profile&&s.profile.pvd){
     var bp=base.profile.pvd;
@@ -393,7 +394,7 @@ if(window.claude&&window.claude.use){
     function(){apiTried=true;saveState='local';flag();});
 }else{apiTried=true;saveState='local'}
 function mirror(){try{localStorage.setItem(LSKEY,JSON.stringify(S))}catch(e){}}
-function touch(){S.updatedAt=Date.now();mirror();queueSave()}
+function touch(){S.updatedAt=Date.now();mirror();queueSave();if(typeof queuePush==='function')queuePush();}
 function queueSave(){
   if(!api){saveState=apiTried?'local':'idle';flag();return}
   saveState='busy';flag();clearTimeout(saveTimer);saveTimer=setTimeout(doSave,900);
@@ -406,6 +407,8 @@ function doSave(){
 }
 function flag(){
   var f=$('#saveflag');if(!f)return;
+  var sl=(typeof syncLabel==='function')?syncLabel():null;
+  if(sl){f.innerHTML='<span class="savedot '+sl[0]+'"></span><span><b>'+esc(sl[1])+'</b>'+esc(sl[2])+'</span>';return}
   var m={idle:['','กำลังเชื่อมต่อ'],busy:['busy','กำลังบันทึก'],saved:['','ข้อมูลซิงก์แล้ว'],
     local:['err','บันทึกในเครื่องนี้'],error:['err','บันทึกไม่สำเร็จ'],conflict:['err','มีการแก้จากอีกหน้าจอ']}[saveState]||['',''];
   var sub={saved:'แก้ไขได้ทุกอุปกรณ์',local:'ยังไม่ได้ซิงก์ข้ามเครื่อง',busy:'กำลังอัปเดต…',idle:'กำลังตรวจสอบ',
@@ -568,6 +571,55 @@ function autoSheet(){
         if(ok)commit();
       });
     });
+}
+
+/* ---------- ซิงก์ข้ามเครื่องผ่าน Google Drive (Apps Script) ---------- */
+var SKEY='mymoney-sync';
+var sync={url:'',at:0,state:'off',msg:''};
+try{var _sc=JSON.parse(localStorage.getItem(SKEY)||'null');if(_sc&&_sc.url){sync.url=_sc.url;sync.at=_sc.at||0;sync.state='idle';}}catch(e){}
+function syncOn(){return !!sync.url}
+function saveSyncCfg(){try{localStorage.setItem(SKEY,JSON.stringify({url:sync.url,at:sync.at}))}catch(e){}}
+function syncURL(extra){return sync.url+(sync.url.indexOf('?')<0?'?':'&')+extra}
+function syncPull(cb){
+  if(!syncOn()){if(cb)cb();return}
+  sync.state='busy';flag();
+  fetch(syncURL('_='+Date.now()),{cache:'no-store'}).then(function(r){return r.json()}).then(function(j){
+    if(!j||j.error)throw new Error((j&&j.error)||'ตอบกลับผิดรูปแบบ');
+    var changed=false;
+    if(j.data&&j.data.v&&(+j.data.updatedAt||0)>(+S.updatedAt||0)){S=migrate(j.data);mirror();changed=true;}
+    sync.state='ok';sync.at=Date.now();sync.msg='';saveSyncCfg();
+    if(changed)render();else flag();
+    if(cb)cb(null,changed);
+  },function(e){sync.state='err';sync.msg=(e&&e.message)||'ดึงข้อมูลไม่สำเร็จ';flag();if(cb)cb(e)});
+}
+var pushT=null;
+function syncPush(cb){
+  if(!syncOn()){if(cb)cb();return}
+  sync.state='busy';flag();
+  fetch(syncURL('_='+Date.now()),{method:'POST',headers:{'Content-Type':'text/plain;charset=utf-8'},
+    body:JSON.stringify(S)}).then(function(r){return r.json()}).then(function(j){
+    if(!j||j.error)throw new Error((j&&j.error)||'บันทึกไม่สำเร็จ');
+    sync.state='ok';sync.at=Date.now();sync.msg='';saveSyncCfg();flag();if(cb)cb(null);
+  },function(e){sync.state='err';sync.msg=(e&&e.message)||'ส่งข้อมูลไม่สำเร็จ';flag();if(cb)cb(e)});
+}
+function queuePush(){
+  if(!syncOn())return;
+  clearTimeout(pushT);pushT=setTimeout(function(){syncPush()},1500);
+}
+function syncLabel(){
+  if(!syncOn())return null;
+  if(sync.state==='busy')return ['busy','กำลังซิงก์','กับ Google Drive'];
+  if(sync.state==='err')return ['err','ซิงก์ไม่สำเร็จ',sync.msg||'ลองใหม่ในหน้าตั้งค่า'];
+  return ['','ข้อมูลซิงก์แล้ว',sync.at?('ล่าสุด '+new Date(sync.at).toLocaleTimeString('th-TH',{hour:'2-digit',minute:'2-digit'})):'แก้ไขได้ทุกอุปกรณ์'];
+}
+
+/* ---------- โหมดการแสดงผล ---------- */
+function applyView(){
+  var m=document.querySelector('meta[name="viewport"]');
+  if(!m){m=document.createElement('meta');m.setAttribute('name','viewport');document.head.appendChild(m);}
+  m.setAttribute('content', S.settings.view==='wide'
+    ? 'width=1180,initial-scale=1,viewport-fit=cover'
+    : 'width=device-width,initial-scale=1,viewport-fit=cover');
 }
 
 /* ---------- view state ---------- */
@@ -959,6 +1011,31 @@ function vSet(){
     '<button class="btn ghost" data-a="backup">สำรองข้อมูล</button></div></div></div>';
 
   h+='<div class="card"><div class="setsec">'+
+    lead('ซิงก์ข้ามเครื่อง (Google Drive)', syncOn()?'เปิดอยู่ · ข้อมูลถูกเก็บไว้ใน Drive ของคุณเอง':'วางลิงก์ซิงก์ที่ได้จาก Google Apps Script เพื่อให้มือถือกับคอมเห็นข้อมูลตรงกัน')+
+    '<div><label for="syncurl">ลิงก์ซิงก์</label>'+
+    '<input id="syncurl" type="url" placeholder="https://script.google.com/macros/s/.../exec?token=..." value="'+esc(sync.url)+'">'+
+    '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px">'+
+      '<button class="btn pri" data-a="syncsave">บันทึกลิงก์และเชื่อมต่อ</button>'+
+      (syncOn()?'<button class="btn ghost" data-a="syncpull">⬇ ดึงจากคลาวด์</button>'+
+                '<button class="btn ghost" data-a="syncpush">⬆ ส่งขึ้นคลาวด์</button>'+
+                '<button class="btn dgr" data-a="syncoff">ปิดการซิงก์</button>':'')+
+    '</div>'+
+    '<div class="hint" style="margin-top:8px">'+
+      (syncOn()
+        ? 'สถานะ: '+esc(sync.state==='err'?('ผิดพลาด — '+sync.msg):(sync.state==='busy'?'กำลังซิงก์…':'พร้อมใช้งาน'))+
+          (sync.at?' · ล่าสุด '+esc(new Date(sync.at).toLocaleString('th-TH')):'')+
+          '<br>ทุกครั้งที่แก้ข้อมูล ระบบจะส่งขึ้น Drive ให้เอง และดึงลงมาตอนเปิดแอป ถ้าสองเครื่องแก้พร้อมกัน ตัวที่แก้ทีหลังจะชนะ'
+        : 'ลิงก์นี้เก็บไว้ในเครื่องนี้เท่านั้น ไม่ถูกฝังลงไฟล์บนเว็บ · ต้องวางลิงก์เดียวกันในทุกเครื่องที่อยากให้ข้อมูลตรงกัน')+
+    '</div></div></div></div>';
+
+  h+='<div class="card"><div class="setsec">'+
+    lead('การแสดงผลบนหน้าจอนี้','เลือกว่าจะให้ตัวใหญ่อ่านง่าย หรือย่อให้เห็นทุกการ์ดในหน้าเดียว')+
+    '<div><div class="seg" id="viewseg">'+
+      '<button data-view="auto" aria-pressed="'+(S.settings.view!=='wide')+'">มือถือ · ตัวใหญ่</button>'+
+      '<button data-view="wide" aria-pressed="'+(S.settings.view==='wide')+'">เต็มหน้าจอ · เห็นทุกการ์ด</button>'+
+    '</div><div class="hint" style="margin-top:7px">โหมดเต็มหน้าจอจะย่อหน้าเว็บให้กว้างเท่าคอมพิวเตอร์ เห็นเมนูด้านซ้ายและการ์ดสองคอลัมน์พร้อมกัน ตัวหนังสือจะเล็กลง ซูมนิ้วขยายดูได้ · ตั้งค่านี้แยกของแต่ละเครื่อง</div></div></div></div>';
+
+  h+='<div class="card"><div class="setsec">'+
     lead('รายรับและรายการหัก','กรอกเงินเดือนแล้วระบบหักทั้ง 3 รายการให้อัตโนมัติ')+
     '<div><div class="fgrid">'+fld('เงินเดือน','p.salary',p.salary)+fld('ประกันสังคม / เดือน','p.sso',p.sso)+
       fld('กองทุนสำรองเลี้ยงชีพ / เดือน','p.pvdM',p.pvdM)+fld('กยศ. / เดือน','p.kyst',p.kyst)+'</div>'+
@@ -1332,8 +1409,21 @@ document.addEventListener('click',function(e){
     else if(a==='csvport')textSheet('CSV พอร์ตหุ้น',csvPort(),'portfolio.csv');
     else if(a==='backup')textSheet('ข้อมูลสำรอง',JSON.stringify(S),'mymoney-backup.json');
     else if(a==='restore')restoreSheet();
+    else if(a==='syncsave'){
+      var u=(document.getElementById('syncurl')||{}).value||'';
+      u=u.trim();
+      if(u&&!/^https:\/\//.test(u)){alert('ลิงก์ต้องขึ้นต้นด้วย https://');return}
+      sync.url=u;sync.at=0;sync.state=u?'idle':'off';sync.msg='';saveSyncCfg();
+      if(u)syncPull(function(err){if(!err)syncPush(function(){render()});else render()});
+      else render();
+    }
+    else if(a==='syncpull')syncPull();
+    else if(a==='syncpush')syncPush();
+    else if(a==='syncoff'){sync.url='';sync.at=0;sync.state='off';saveSyncCfg();render()}
     return;
   }
+  var vw=e.target.closest('[data-view]');
+  if(vw){S.settings.view=vw.dataset.view;applyView();touch();render();window.scrollTo(0,0);return}
   var f=e.target.closest('[data-f]');
   if(f){V.filter=f.dataset.f;render()}
 });
@@ -1363,7 +1453,9 @@ function softRefresh(){
 document.addEventListener('keydown',function(e){
   if(e.key==='Escape'){var s=document.querySelector('.scrim');if(s)s.remove()}
 });
+applyView();
 render();
+if(syncOn())setTimeout(function(){syncPull()},400);
 /* เวอร์ชันที่โฮสต์เอง: ดึงราคาตลาดให้เองวันละครั้ง */
 if(HOSTED&&S.settings.autoPrice&&S.holdings.length&&S.settings.lastAuto!==today()&&typeof fetch==='function'){
   setTimeout(function(){
