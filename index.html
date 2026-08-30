@@ -239,6 +239,18 @@ input:focus,select:focus,textarea:focus{outline:none;border-color:var(--accent);
 .seg{display:flex;gap:6px;background:var(--card2);padding:4px;border-radius:12px}
 .seg button{flex:1;padding:9px 6px;border-radius:9px;font-size:13.5px;font-weight:600;color:var(--muted)}
 .seg button[aria-pressed="true"]{background:var(--card);color:var(--ink);box-shadow:var(--shadow)}
+.ybars{display:flex;flex-direction:column;gap:9px;padding-top:12px}
+.yrow{display:flex;align-items:center;gap:10px;width:100%;text-align:left;padding:5px 4px;border-radius:10px}
+.yrow:hover{background:var(--card2)}
+.yrow .ym{width:42px;flex:none;font-size:12.5px;color:var(--muted);font-weight:600}
+.yrow .yb{flex:1;min-width:0;display:flex;flex-direction:column;gap:3px}
+.yrow .yb i{display:block;height:8px;border-radius:5px;min-width:2px}
+.yrow .yb i.in{background:var(--pos)}
+.yrow .yb i.out{background:var(--neg);opacity:.75}
+.yrow .yv{width:96px;flex:none;text-align:right;font-size:13px}
+@media (max-width:520px){.yrow .yv{width:78px;font-size:12px}}
+.seg.tiny{padding:3px;gap:3px;flex:none}
+.seg.tiny button{flex:none;padding:6px 10px;font-size:12.5px}
 
 /* holdings */
 .hold{border:1px solid var(--line);border-radius:14px;padding:13px 14px;background:var(--card2)}
@@ -382,6 +394,22 @@ function mShort(mk){var a=mk.split('-');return TH_M[+a[1]-1]+' '+(+a[0]+543)}
 function dLabel(ds){var a=ds.split('-');return (+a[2])+' '+TH_M[+a[1]-1]+' '+((+a[0]+543)%100)}
 function addM(mk,d){var a=mk.split('-'),y=+a[0],m=+a[1]-1+d;y+=Math.floor(m/12);m=((m%12)+12)%12;return y+'-'+p2(m+1)}
 function daysAgo(ds){if(!ds)return 999;return Math.round((new Date(today())-new Date(ds))/86400000)}
+/* ---------- รอบเดือนแบบวันเงินเดือน: วันทำการสุดท้ายของเดือน → วันทำการสุดท้ายของเดือนถัดไป ---------- */
+function ds(d){return d.getFullYear()+'-'+p2(d.getMonth()+1)+'-'+p2(d.getDate())}
+function lastBiz(mk){
+  var a=mk.split('-'),d=new Date(+a[0],+a[1],0);
+  while(d.getDay()===0||d.getDay()===6)d.setDate(d.getDate()-1);
+  return ds(d);
+}
+function shiftD(dstr,n){var d=new Date(dstr+'T00:00:00');d.setDate(d.getDate()+n);return ds(d)}
+/* รอบของเดือน mk = [วันทำการสุดท้ายของเดือนก่อน , วันทำการสุดท้ายของเดือน mk) */
+function periodOf(mk){var f=lastBiz(addM(mk,-1)),t=lastBiz(mk);return {from:f,to:t,last:shiftD(t,-1)}}
+function periodDays(mk){var p=periodOf(mk);return Math.max(1,Math.round((new Date(p.to)-new Date(p.from))/86400000))}
+/* วันที่นี้อยู่ในรอบของเดือนไหน */
+function mkOf(dstr){var mk=mkey(dstr);return dstr>=lastBiz(mk)?addM(mk,1):mk}
+function periodLabel(mk){var p=periodOf(mk);return dLabel(p.from)+' – '+dLabel(p.last)}
+function yearOfMk(mk){return +mk.slice(0,4)}
+function monthsOfYear(y){var a=[];for(var i=1;i<=12;i++)a.push(y+'-'+p2(i));return a}
 function rate(){return +S.settings.usdthb||32.79}
 function thb(v,cur){return cur==='USD'?(+v||0)*rate():(+v||0)}
 function cat(type,id){var a=S.cats[type]||[];for(var i=0;i<a.length;i++)if(a[i].id===id)return a[i];return {id:id,n:'ไม่ระบุ',e:'•',b:0}}
@@ -432,17 +460,24 @@ function buildDoc(){
 }
 
 /* ---------- derived ---------- */
-function txOf(mk){return S.tx.filter(function(t){return mkey(t.date)===mk})}
-function sums(mk){
-  var a=txOf(mk),o={income:0,expense:0,saving:0,invest:0,n:a.length};
+function txOf(mk){return S.tx.filter(function(t){return mkOf(t.date)===mk})}
+function txOfYear(y){return S.tx.filter(function(t){return yearOfMk(mkOf(t.date))===y})}
+function sumsOf(a){
+  var o={income:0,expense:0,saving:0,invest:0,n:a.length};
   a.forEach(function(t){o[t.type]=(o[t.type]||0)+(+t.amount||0)});
   return o;
 }
-function plan(){
-  var p=S.profile,net=(+p.salary||0)-(+p.sso||0)-(+p.pvdM||0)-(+p.kyst||0);
+function sums(mk){return sumsOf(txOf(mk))}
+/* เงินเดือนของรอบนั้น: ถ้าบันทึกรายรับหมวด "เงินเดือน" ไว้แล้ว ใช้ยอดนั้นเลย ไม่ต้องกรอกซ้ำ */
+function salaryTx(mk){return sum(txOf(mk).filter(function(t){return t.type==='income'&&t.cat==='i1'}),function(t){return t.amount})}
+function salaryOf(mk){var v=salaryTx(mk);return v>0?{v:v,auto:true}:{v:(+S.profile.salary||0),auto:false}}
+function plan(mk){
+  mk=mk||V.mk;
+  var p=S.profile,sal=salaryOf(mk);
+  var net=sal.v-(+p.sso||0)-(+p.pvdM||0)-(+p.kyst||0);
   var fixed=sum(p.fixed,function(x){return x.v});
   var save=(+p.plan.travel||0)+(+p.plan.partner||0)+(+p.plan.dca||0)+(+p.plan.emergency||0);
-  return {net:net,fixed:fixed,save:save,free:net-fixed-save};
+  return {gross:sal.v,auto:sal.auto,net:sal.v>0?net:0,fixed:fixed,save:save,free:(sal.v>0?net:0)-fixed-save};
 }
 function port(){
   var val=0,cost=0;
@@ -457,7 +492,7 @@ function port(){
 function whtBase(){return +S.profile.bal.wht||0}
 function whtTotal(){return whtBase()+sum(S.tx.filter(function(t){return t.type==='expense'&&t.cat==='c9'}),function(t){return t.amount})}
 function monthsSinceStart(){
-  var a=startMk().split('-'),b=mkey(today()).split('-');
+  var a=startMk().split('-'),b=mkOf(today()).split('-');
   var n=(+b[0]-+a[0])*12+(+b[1]-+a[1])+1;
   return Math.max(0,n);
 }
@@ -485,10 +520,12 @@ function wealth(){
 }
 function priceStale(){if(!S.holdings.length)return 999;var d=0;S.holdings.forEach(function(h){d=Math.max(d,daysAgo(h.updated))});return d}
 function startD(){return S.settings.startDate||'2026-09-01'}
-function startMk(){return mkey(startD())}
+function startMk(){return mkOf(startD())}
 function started(){return today()>=startD()}
-function daysInMonth(mk){var a=mk.split('-');return new Date(+a[0],+a[1],0).getDate()}
-function activeDays(mk){var d=daysInMonth(mk);return mk===startMk()?(d-(+startD().slice(8,10))+1):d}
+function activeDays(mk){
+  var p=periodOf(mk),f=(mk===startMk()&&startD()>p.from)?startD():p.from;
+  return Math.max(1,Math.round((new Date(p.to)-new Date(f))/86400000));
+}
 function monthBudget(){
   var tot=sum(S.cats.expense,function(c){return +c.b||0});
   if(tot>0)return {v:tot,src:'งบตามหมวด'};
@@ -636,7 +673,7 @@ function applyView(){
 }
 
 /* ---------- view state ---------- */
-var V={tab:'home',mk:(mkey(today())<startMk()?startMk():mkey(today())),filter:'all'};
+var V={tab:'home',mk:(mkOf(today())<startMk()?startMk():mkOf(today())),filter:'all',scope:'month',yr:yearOfMk(mkOf(today()))};
 
 /* ---------- svg bits ---------- */
 function icon(name){
@@ -684,7 +721,7 @@ function render(){
     '</div>'+
     '<div id="shell"><main id="main"></main></div>';
   var m=$('#main'),t=V.tab;
-  m.innerHTML=head(t)+(t==='home'?vHome():t==='tx'?vTx():t==='port'?vPort():vSet());
+  m.innerHTML=head(t)+(t==='home'?(V.scope==='year'?vYear():vHome()):t==='tx'?vTx():t==='port'?vPort():vSet());
   if(t==='home'||t==='tx')app.insertAdjacentHTML('beforeend','<button class="fab" data-a="addtx">＋ บันทึกรายการ</button>');
   if(t==='port')app.insertAdjacentHTML('beforeend','<button class="fab" data-a="addh">＋ เพิ่มหุ้น</button>');
   flag();
@@ -702,7 +739,8 @@ function head(t){
   var titles={home:'ภาพรวมการเงิน',tx:'รายการทั้งหมด',port:'พอร์ตลงทุน',set:'ตั้งค่าการเงิน'};
   var eyebrow=started()?dLabel(today()):'เริ่มบันทึก '+dLabel(startD());
   return '<div class="phead"><div><div class="eyebrow">'+esc(eyebrow)+'</div><h2>'+titles[t]+'</h2></div>'+
-    '<div class="act">'+(t==='set'?'':'<button class="btn ghost" data-tab="set">ตั้งค่า</button>')+
+    '<div class="act">'+((t==='home'||t==='tx')?mnav():'')+
+    (t==='set'?'':'<button class="btn ghost" data-tab="set">ตั้งค่า</button>')+
     '<button class="btn pri" data-a="addtx">＋ เพิ่มรายการ</button></div></div>';
 }
 
@@ -712,14 +750,18 @@ function vHome(){
   h+='<div class="notes">'+notices()+'</div>';
   h+='<div class="grid g23">';
   h+='<div class="hero">'+
-      '<div style="display:flex;align-items:center;gap:10px"><span class="tag">แผนเดือนนี้</span>'+
-        '<span class="xs" style="margin-left:auto;color:rgba(233,244,241,.82)">'+(pl.net>0?'เงินเดือนสุทธิ '+m0(pl.net):'ยังไม่ได้ตั้งเงินเดือน')+'</span></div>'+
+      '<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap"><span class="tag">รอบ '+esc(mShort(V.mk))+'</span>'+
+        '<span class="xs" style="margin-left:auto;color:rgba(233,244,241,.82)">'+(pl.net>0?'เงินเดือนสุทธิ '+m0(pl.net):'ยังไม่ได้ใส่เงินเดือน')+'</span></div>'+
+      '<div class="cap" style="margin:6px 0 0">'+esc(periodLabel(V.mk))+'</div>'+
       (pl.net>0
-        ? '<div style="margin-top:14px"><div class="cap" style="margin:0">เงินพร้อมใช้หลังหักภาระและเป้าหมาย</div>'+
-          '<span class="big num '+(pl.free<0?'neg':'')+'">'+m0(pl.free)+'</span></div>'
-        : '<div style="margin-top:14px"><div class="cap" style="margin:0">ยังไม่ได้ใส่เงินเดือน</div>'+
+        ? '<div style="margin-top:12px"><div class="cap" style="margin:0">เงินพร้อมใช้หลังหักภาระและเป้าหมาย</div>'+
+          '<span class="big num '+(pl.free<0?'neg':'')+'">'+m0(pl.free)+'</span>'+
+          '<div class="cap" style="margin-top:4px">'+(pl.auto
+            ? 'จากรายการ “เงินเดือน” ที่บันทึกไว้ '+m0(pl.gross)+' — หัก ปกส. '+m0(S.profile.sso)+' · กองทุนฯ '+m0(S.profile.pvdM)+' · สหกรณ์ '+m0(S.profile.kyst)+' ให้อัตโนมัติแล้ว'
+            : 'จากเงินเดือนที่ตั้งไว้ในหน้าตั้งค่า '+m0(pl.gross)+' — บันทึกรายรับหมวด “เงินเดือน” แล้วระบบจะใช้ยอดจริงแทนให้เอง')+'</div></div>'
+        : '<div style="margin-top:12px"><div class="cap" style="margin:0">ยังไม่ได้ใส่เงินเดือนของรอบนี้</div>'+
           '<span class="big num">—</span>'+
-          '<div class="cap" style="margin-top:4px">ใส่เงินเดือนในหน้าตั้งค่า แล้วระบบจะคำนวณเงินพร้อมใช้ให้อัตโนมัติ</div></div>')+
+          '<div class="cap" style="margin-top:4px">กด “บันทึกรายการ” เลือกรายรับ → หมวดเงินเดือน ระบบจะหักประกันสังคม กองทุนสำรองฯ และสหกรณ์ให้อัตโนมัติ</div></div>')+
       '<div class="foot"><div><div class="k">ภาระประจำ</div><div class="v num">'+m0(pl.fixed)+'</div></div>'+
         '<div><div class="k">เก็บและลงทุน</div><div class="v num">'+m0(pl.save)+'</div></div>'+
         '<button class="btn deep" data-a="addtx" style="background:rgba(255,255,255,.16)">＋ บันทึกรายการ</button></div>'+
@@ -786,7 +828,7 @@ function vHome(){
   return h;
 }
 function dailyCard(){
-  var emk=mkey(today())<startMk()?startMk():mkey(today());
+  var emk=mkOf(today())<startMk()?startMk():mkOf(today());
   var d=dailyBudget(emk),used=started()?spentOn(today()):0,pc=d.v>0?used/d.v*100:0;
   var left=d.v-used,cls=pc>100?'over':(pc>=80?'warn':'');
   var msg=!started()?'จะเริ่มนับตั้งแต่ '+dLabel(startD())
@@ -802,7 +844,7 @@ function dailyCard(){
       '<span class="mut sm">จากงบวันละ <b class="num">'+m0(d.v)+'</b></span></div>'+
     '<div class="track" style="margin-top:11px"><i class="'+cls+'" style="width:'+Math.min(100,Math.max(0,pc)).toFixed(1)+'%"></i></div>'+
     '<div class="sm '+(pc>100?'neg':'mut')+'" style="margin-top:8px">'+esc(msg)+'</div>'+
-    (d.v>0?'<div class="xs fnt" style="margin-top:4px">คิดจาก'+esc(d.src)+' '+m0(d.month)+' หารด้วย '+d.days+' วันของเดือนนี้</div>':'')+
+    (d.v>0?'<div class="xs fnt" style="margin-top:4px">คิดจาก'+esc(d.src)+' '+m0(d.month)+' หารด้วย '+d.days+' วันของรอบนี้</div>':'')+
     '</div></div>';
 }
 function statCard(sym,lab,val,cls,sub){
@@ -820,13 +862,12 @@ function miniBox(n,v,sub,c){
     '<div class="num" style="font-size:17px">'+v+'</div><div class="xs fnt">'+esc(sub)+'</div></div>';
 }
 function notices(){
-  var out=[],t=today(),cur=mkey(t)===V.mk;
+  var out=[],t=today(),cur=mkOf(t)===V.mk;
   if(!started()){
     out.push(note('','🗓️','จะเริ่มบันทึกวันที่ '+dLabel(startD()),'ก่อนถึงวันนั้นระบบยังไม่นับรายรับ–รายจ่าย และไม่สรุปยอดย้อนหลัง','tab:set','เปลี่ยนวันเริ่ม'));
     return out.join('');
   }
-  var d=dailyBudget(mkey(t)),used=spentOn(t),pc=d.v>0?used/d.v*100:0;
-  if(cur&&mkey(t)===V.mk){}
+  var d=dailyBudget(mkOf(t)),used=spentOn(t),pc=d.v>0?used/d.v*100:0;
   if(d.v>0&&pc>100)
     out.push(note('crit','🚨','วันนี้ใช้เกินงบรายวันแล้ว '+m0(used-d.v),'งบวันละ '+m0(d.v)+' · ใช้ไป '+m0(used)+' ถ้าใช้เท่านี้ทั้งเดือนจะเกินงบ '+m0((used-d.v)*d.days),'tab:tx','ดูรายการ'));
   else if(d.v>0&&pc>=80)
@@ -866,11 +907,12 @@ function txRow(t){
 
 /* ---- transactions ---- */
 function vTx(){
+  if(V.scope==='year')return vYear();
   var s=sums(V.mk);
   var list=txOf(V.mk).filter(function(t){return V.filter==='all'||t.type===V.filter})
     .sort(function(a,b){return a.date<b.date?1:a.date>b.date?-1:(b.ts||0)-(a.ts||0)});
-  var h='<div class="card"><div class="hd"><div><div class="eyebrow">ประวัติรายรับ–รายจ่าย</div><h3>'+list.length+' รายการ</h3></div>'+
-    '<div class="act">'+mnav()+'</div></div>'+
+  var h='<div class="card"><div class="hd"><div><div class="eyebrow">'+esc(periodLabel(V.mk))+'</div><h3>'+list.length+' รายการ</h3></div>'+
+    '<div class="act"><span class="pill">'+esc(mShort(V.mk))+'</span></div></div>'+
     '<div class="pad" style="padding-bottom:10px"><div class="chips">'+
       chip('all','ทั้งหมด')+chip('income','รายรับ')+chip('expense','รายจ่าย')+chip('saving','เงินเก็บ')+chip('invest','ลงทุน')+
     '</div></div>';
@@ -895,11 +937,68 @@ function vTx(){
   return h;
 }
 function chip(v,l){return '<button data-f="'+v+'" aria-pressed="'+(V.filter===v)+'">'+l+'</button>'}
+
+/* ---- สรุปทั้งปี ---- */
+function vYear(){
+  var y=V.yr,all=txOfYear(y),s=sumsOf(all);
+  var mks=monthsOfYear(y).filter(function(mk){return mk>=startMk()});
+  var rows=mks.map(function(mk){return {mk:mk,s:sums(mk)}});
+  var maxBar=Math.max(1,Math.max.apply(null,rows.map(function(r){return Math.max(r.s.income,r.s.expense+r.s.saving+r.s.invest)})));
+  var netFlow=s.income-s.expense-s.saving-s.invest;
+  var h='<div class="card"><div class="hd"><div><div class="eyebrow">สรุปทั้งปี · '+esc(rows.length?periodLabel(rows[0].mk).split(' – ')[0]+' – '+periodLabel(rows[rows.length-1].mk).split(' – ')[1]:'')+'</div><h3>ปี '+(y+543)+'</h3></div>'+
+    '<div class="act"><span class="pill">'+rows.length+' รอบเดือน</span></div></div>'+
+    '<div class="pad grid g3" style="padding-top:12px;gap:12px">'+
+      statCard('↓','รายรับรวมทั้งปี',m0(s.income),'pos',all.length+' รายการ')+
+      statCard('↑','รายจ่ายรวมทั้งปี',m0(s.expense),'neg','ไม่รวมเงินเก็บและลงทุน')+
+      statCard('◎','เก็บและลงทุนรวม',m0(s.saving+s.invest),'','เงินเก็บ '+m0(s.saving)+' · ลงทุน '+m0(s.invest))+
+    '</div>'+
+    '<div class="pad" style="padding-top:0"><div class="hint">คงเหลือสุทธิทั้งปี <b class="num '+(netFlow>=0?'pos':'neg')+'">'+m0(netFlow)+'</b> '+
+      '· เฉลี่ยรายจ่ายเดือนละ <b class="num">'+m0(rows.length?s.expense/rows.length:0)+'</b></div></div></div>';
+
+  h+='<div class="card"><div class="hd"><div><div class="eyebrow">เทียบรายเดือน</div><h3>รายรับ–รายจ่ายแต่ละรอบ</h3></div></div>';
+  if(!rows.length)h+='<div class="empty">ยังไม่มีรอบเดือนในปีนี้</div>';
+  else h+='<div class="pad ybars">'+rows.map(function(r){
+    var out=r.s.expense+r.s.saving+r.s.invest,net=r.s.income-out;
+    return '<button class="yrow" data-ymk="'+r.mk+'">'+
+      '<span class="ym">'+esc(TH_M[+r.mk.slice(5,7)-1])+'</span>'+
+      '<span class="yb"><i class="in" style="width:'+(r.s.income/maxBar*100).toFixed(1)+'%"></i>'+
+        '<i class="out" style="width:'+(out/maxBar*100).toFixed(1)+'%"></i></span>'+
+      '<span class="yv num '+(net>=0?'pos':'neg')+'">'+(net>=0?'+':'')+m0(net)+'</span></button>';
+  }).join('')+'</div>'+
+  '<div class="pad" style="padding-top:0"><div class="hint">แถบบนคือรายรับ แถบล่างคือรายจ่าย+เงินเก็บ+ลงทุน · กดที่เดือนไหนเพื่อเปิดดูรายการของรอบนั้น</div></div>';
+  h+='</div>';
+
+  var byCat={};
+  all.forEach(function(t){if(t.type!=='expense')return;byCat[t.cat]=(byCat[t.cat]||0)+(+t.amount||0)});
+  var cats=Object.keys(byCat).map(function(k){return {n:cat('expense',k).e+' '+cat('expense',k).n,v:byCat[k]}})
+    .sort(function(a,b){return b.v-a.v}).slice(0,6);
+  var w=wealth();
+  h+='<div class="grid g2">'+
+    '<div class="card"><div class="hd"><div><div class="eyebrow">ใช้ไปกับอะไรมากที่สุด</div><h3>รายจ่ายตามหมวดทั้งปี</h3></div></div>'+
+      (cats.length?'<div class="pad donut">'+donut(cats.map(function(c,i){return {n:c.n,v:c.v,c:SERIES[i%SERIES.length]}}),m0(s.expense),'ทั้งปี')+
+        legend(cats.map(function(c,i){return {n:c.n,v:c.v,c:SERIES[i%SERIES.length]}}))+'</div>'
+        :'<div class="empty">ยังไม่มีรายจ่ายในปีนี้</div>')+'</div>'+
+    '<div class="card"><div class="hd"><div><div class="eyebrow">ณ วันนี้</div><h3>ความมั่งคั่งสะสม</h3></div></div>'+
+      '<div class="pad" style="padding-top:10px">'+
+      '<span class="num '+(w.net>=0?'pos':'neg')+'" style="font-size:28px">'+m0(w.net)+'</span>'+
+      '<div class="sm mut" style="margin-top:6px">ทรัพย์สิน '+m0(w.assets)+' · หนี้คงเหลือ '+m0(w.debt)+'</div>'+
+      '<div class="grid g2" style="margin-top:14px;gap:10px">'+
+        miniBox('พอร์ตหุ้น',m0(w.port.val),'DCA '+m0(dcaTotal())+' / เดือน',SERIES[0])+
+        miniBox('กองทุนสำรองฯ',m0(w.pvd),'เข้าเดือนละ '+m0(pvdMonthly()),SERIES[2])+
+        miniBox('ภาษีหัก ณ ที่จ่าย',m0(whtTotal()),'ขอคืนได้ตอนยื่นภาษี',SERIES[4])+
+        miniBox('เงินเก็บกับแฟน',m0(partnerValue()),'ลงทุนใน IVV',SERIES[3])+
+      '</div></div></div>'+
+  '</div>';
+  return h;
+}
 function mnav(){
-  var atStart=V.mk<=startMk();
-  return '<div class="mnav"><button data-a="mprev" aria-label="เดือนก่อน"'+(atStart?' disabled style="opacity:.35"':'')+'>‹</button>'+
-    '<span class="m">'+mLabel(V.mk)+'</span>'+
-    '<button data-a="mnext" aria-label="เดือนถัดไป">›</button></div>';
+  var yearMode=V.scope==='year';
+  var atStart=yearMode?(V.yr<=yearOfMk(startMk())):(V.mk<=startMk());
+  return '<div class="mnav"><button data-a="mprev" aria-label="ย้อนกลับ"'+(atStart?' disabled style="opacity:.35"':'')+'>‹</button>'+
+    '<span class="m" title="'+esc(yearMode?'ทั้งปี':periodLabel(V.mk))+'">'+esc(yearMode?('ปี '+(V.yr+543)):mLabel(V.mk))+'</span>'+
+    '<button data-a="mnext" aria-label="ถัดไป">›</button></div>'+
+    '<div class="seg tiny"><button data-sc="month" aria-pressed="'+(!yearMode)+'">รายเดือน</button>'+
+    '<button data-sc="year" aria-pressed="'+yearMode+'">ทั้งปี</button></div>';
 }
 function dayTotal(d){
   var i=0,e=0;S.tx.forEach(function(t){if(t.date!==d)return;if(t.type==='income')i+=+t.amount;else e+=+t.amount});
@@ -948,9 +1047,9 @@ function vPort(){
 
   h+='<div class="grid g3">'+
     statCard('◔','พอร์ตหุ้นปัจจุบัน',money(p.val),'', S.holdings.length+' สินทรัพย์ · USD/THB '+rate().toFixed(2))+
-    statCard('◎','กองทุนสำรองเลี้ยงชีพ',m0(pv),'',S.profile.pvd.amc+' '+S.profile.pvd.code+' · เงินต้น '+m0(pvdPrincipal())+' + ผลประโยชน์ '+m0(pv-pvdPrincipal()))+
-    statCard('▤','ออมและลงทุนเดือนนี้',m0(started()?dcaTotal()+pvdMonthly():0),'',
-      started()?'DCA '+m0(dcaTotal())+' → พอร์ตหุ้น · กองทุนฯ '+m0(pvdMonthly())+' (เรา '+m0(S.profile.pvdM)+' + นายจ้าง '+m0(S.profile.pvd.employer)+') → พอร์ตกองทุน'
+    statCard('◎','กองทุนสำรองเลี้ยงชีพ',m0(pv),'',S.profile.pvd.amc+' '+S.profile.pvd.code+' · เข้าเดือนละ '+m0(pvdMonthly())+' (หักจากเงินเดือน '+m0(S.profile.pvdM)+' + นายจ้าง '+m0(S.profile.pvd.employer)+')')+
+    statCard('▤','DCA เดือนนี้',m0(started()?dcaTotal():0),'',
+      started()?'แบ่งเข้า '+S.dca.length+' ตัวตามสัดส่วนด้านล่าง → พอร์ตหุ้น'
                :'เริ่มนับ '+dLabel(startD()))+
   '</div>';
 
@@ -1050,13 +1149,14 @@ function vSet(){
     '</div><div class="hint" style="margin-top:7px">โหมดเต็มหน้าจอจะย่อหน้าเว็บให้กว้างเท่าคอมพิวเตอร์ เห็นเมนูด้านซ้ายและการ์ดสองคอลัมน์พร้อมกัน ตัวหนังสือจะเล็กลง ซูมนิ้วขยายดูได้ · ตั้งค่านี้แยกของแต่ละเครื่อง</div></div></div></div>';
 
   h+='<div class="card"><div class="setsec">'+
-    lead('รายรับและรายการหัก','กรอกเงินเดือนแล้วระบบหักทั้ง 3 รายการให้อัตโนมัติ')+
+    lead('รายรับและรายการหัก','บันทึกรายรับหมวด “เงินเดือน” ครั้งเดียว ระบบหักทั้ง 3 รายการให้อัตโนมัติ')+
     '<div><div class="fgrid">'+fld('เงินเดือน','p.salary',p.salary)+fld('ประกันสังคม / เดือน','p.sso',p.sso)+
       fld('กองทุนสำรองเลี้ยงชีพ / เดือน','p.pvdM',p.pvdM)+fld('กยศ. / เดือน','p.kyst',p.kyst)+'</div>'+
       '<div style="margin-top:12px;padding:11px 13px;border:1px solid var(--line);border-radius:12px;display:flex;flex-wrap:wrap;gap:10px;align-items:baseline">'+
-        '<span class="sm mut">เงินเดือน <b class="num">'+m0(p.salary)+'</b></span>'+
+        '<span class="sm mut">เงินเดือนรอบนี้ <b class="num">'+m0(pl.gross)+'</b>'+(pl.auto?' <span class="fnt">(จากรายการที่บันทึก)</span>':'')+'</span>'+
         '<span class="sm neg">− หัก <b class="num">'+m0((+p.sso||0)+(+p.pvdM||0)+(+p.kyst||0))+'</b></span>'+
         '<span class="sm" style="margin-left:auto">เงินเดือนสุทธิ <b class="num">'+m0(pl.net)+'</b></span></div>'+
+      '<div class="hint" style="margin-top:7px">ช่อง “เงินเดือน” ด้านบนเป็นค่าตั้งต้นสำหรับวางแผน — พอบันทึกรายรับหมวด “เงินเดือน” ในรอบไหน ระบบจะใช้ยอดจริงของรอบนั้นแทนทันที ไม่ต้องมากรอกซ้ำ</div>'+
       '<div class="hint" style="margin-top:7px">กองทุนสำรองเลี้ยงชีพ '+m0(p.pvdM)+' ที่หักจากเงินเดือน จะถูกบวกเข้าพอร์ตกองทุนให้ทุกเดือน พร้อมเงินสมทบนายจ้างอีก '+m0(p.pvd.employer)+' รวมเดือนละ '+m0(pvdMonthly())+' (เงินสมทบนายจ้างเป็นเงินเพิ่ม ไม่ได้หักจากเงินเดือนเรา)</div>'+
       '</div></div></div>';
 
@@ -1107,7 +1207,9 @@ function vSet(){
     '<div class="fgrid"><div><label for="f_start">เริ่มบันทึกวันที่</label>'+
       '<input id="f_start" type="date" data-start="1" value="'+esc(startD())+'"></div>'+
       '<div><label>สถานะ</label><div class="pill" style="margin-top:6px">'+(started()?'เริ่มบันทึกแล้ว':'จะเริ่ม '+dLabel(startD()))+'</div></div>'+
-    '</div></div></div>';
+    '</div>'+
+    '<div class="hint" style="margin-top:9px"><b>รอบเดือนนับตามวันเงินเดือน</b> — แต่ละรอบเริ่มที่วันทำการสุดท้ายของเดือนก่อน ไปจนถึงก่อนวันทำการสุดท้ายของเดือนนั้น ถ้าวันสุดท้ายของเดือนตรงกับเสาร์–อาทิตย์ ระบบจะเลื่อนมาเป็นวันศุกร์ให้เอง<br>รอบปัจจุบัน: <b>'+esc(periodLabel(V.mk))+'</b> ('+activeDays(V.mk)+' วัน)</div>'+
+    '</div></div>';
 
   h+='<div class="card"><div class="setsec">'+
     lead('อัตราแลกเปลี่ยน','ใช้แปลงมูลค่าหุ้นดอลลาร์เป็นบาท')+
@@ -1189,7 +1291,7 @@ function txSheet(t){
         note:s.querySelector('#nt').value.trim(),ts:t.ts||Date.now()};
       var ix=S.tx.findIndex(function(x){return x.id===t.id});
       if(ix>=0)S.tx[ix]=rec;else S.tx.push(rec);
-      V.mk=mkey(rec.date);close();commit();
+      V.mk=mkOf(rec.date);V.scope='month';close();commit();
     });
   });
 }
@@ -1394,8 +1496,11 @@ document.addEventListener('click',function(e){
   var b=e.target.closest('[data-a]');
   if(b){
     var a=b.dataset.a,id=b.dataset.id;
-    if(a==='mprev'){var pm=addM(V.mk,-1);if(pm>=startMk()){V.mk=pm;render()}}
-    else if(a==='mnext'){V.mk=addM(V.mk,1);render()}
+    if(a==='mprev'){
+      if(V.scope==='year'){if(V.yr>yearOfMk(startMk())){V.yr--;render()}}
+      else{var pm=addM(V.mk,-1);if(pm>=startMk()){V.mk=pm;render()}}
+    }
+    else if(a==='mnext'){if(V.scope==='year')V.yr++;else V.mk=addM(V.mk,1);render()}
     else if(a==='addtx')txSheet(null);
     else if(a==='edittx')txSheet(S.tx.find(function(x){return x.id===id}));
     else if(a==='deltx'){var tx=S.tx.find(function(x){return x.id===id});
@@ -1442,6 +1547,10 @@ document.addEventListener('click',function(e){
   }
   var vw=e.target.closest('[data-view]');
   if(vw){S.settings.view=vw.dataset.view;applyView();touch();render();window.scrollTo(0,0);return}
+  var ym=e.target.closest('[data-ymk]');
+  if(ym){V.scope='month';V.mk=ym.dataset.ymk;render();window.scrollTo(0,0);return}
+  var sc=e.target.closest('[data-sc]');
+  if(sc){V.scope=sc.dataset.sc;if(V.scope==='year')V.yr=yearOfMk(V.mk);render();return}
   var f=e.target.closest('[data-f]');
   if(f){V.filter=f.dataset.f;render()}
 });
