@@ -314,7 +314,7 @@ function seed(){
     cats:{
       expense:[{id:'c1',n:'อาหาร',e:'🍜',b:0},{id:'c2',n:'เดินทาง',e:'🚗',b:0},{id:'c3',n:'ที่พัก/บ้าน',e:'🏠',b:0},
                {id:'c4',n:'ช้อปปิ้ง',e:'🛍️',b:0},{id:'c5',n:'สุขภาพ',e:'💊',b:0},{id:'c6',n:'บันเทิง',e:'🎬',b:0},
-               {id:'c7',n:'บิล/ค่าบริการ',e:'🧾',b:0},{id:'c9',n:'ภาษีหัก ณ ที่จ่าย',e:'🧮',b:0},{id:'c8',n:'อื่นๆ',e:'📦',b:0}],
+               {id:'c7',n:'บิล/ค่าบริการ',e:'🧾',b:0},{id:'c9',n:'ภาษีหัก ณ ที่จ่าย',e:'🧮',b:0},{id:'c10',n:'หักจากเงินเดือน',e:'🧾',b:0},{id:'c8',n:'อื่นๆ',e:'📦',b:0}],
       income:[{id:'i1',n:'เงินเดือน',e:'💼',b:0},{id:'i2',n:'งานเสริม',e:'🧰',b:0},{id:'i3',n:'ปันผล/ดอกเบี้ย',e:'📈',b:0},{id:'i4',n:'อื่นๆ',e:'✨',b:0}],
       saving:[{id:'s1',n:'เงินสำรองฉุกเฉิน',e:'🛟',b:0},{id:'s2',n:'เก็บไปเที่ยว',e:'✈️',b:0},{id:'s3',n:'เงินเก็บกับแฟน',e:'💝',b:0},{id:'s4',n:'ออมอื่นๆ',e:'🏦',b:0}],
       invest:[{id:'v1',n:'DCA',e:'📊',b:0},{id:'v2',n:'ซื้อหุ้นเพิ่ม',e:'📈',b:0},{id:'v3',n:'กองทุน',e:'🏛️',b:0}]
@@ -337,6 +337,7 @@ try{S=JSON.parse(document.getElementById('state').textContent);}catch(e){S=null;
 if(!S||!S.v)S=window.__BLANK_SEED__?blankify(seed()):seed();
 try{var l=JSON.parse(localStorage.getItem(LSKEY)||'null');if(l&&l.v&&(l.updatedAt||0)>(S.updatedAt||0))S=l;}catch(e){}
 S=migrate(S);
+try{if(syncDeductions())mirror()}catch(e){}
 function migrate(s){
   var base=seed();
   if(!s.v||s.v<2){
@@ -358,6 +359,8 @@ function migrate(s){
   }
   if(s.cats&&s.cats.expense&&!s.cats.expense.some(function(c){return c.id==='c9'}))
     s.cats.expense.push({id:'c9',n:'ภาษีหัก ณ ที่จ่าย',e:'🧮',b:0});
+  if(s.cats&&s.cats.expense&&!s.cats.expense.some(function(c){return c.id==='c10'}))
+    s.cats.expense.push({id:'c10',n:'หักจากเงินเดือน',e:'🧾',b:0});
   if(s.cats&&s.cats.saving)s.cats.saving.forEach(function(c){if(c.n==='เก็บให้แฟน')c.n='เงินเก็บกับแฟน'});
   if(s.dca&&s.dca.length&&s.dca[0].pct===undefined){
     var tt=s.dca.reduce(function(a,d){return a+(+d.v||0)},0)||1;
@@ -471,13 +474,39 @@ function sums(mk){return sumsOf(txOf(mk))}
 /* เงินเดือนของรอบนั้น: ถ้าบันทึกรายรับหมวด "เงินเดือน" ไว้แล้ว ใช้ยอดนั้นเลย ไม่ต้องกรอกซ้ำ */
 function salaryTx(mk){return sum(txOf(mk).filter(function(t){return t.type==='income'&&t.cat==='i1'}),function(t){return t.amount})}
 function salaryOf(mk){var v=salaryTx(mk);return v>0?{v:v,auto:true}:{v:(+S.profile.salary||0),auto:false}}
+/* หักอัตโนมัติแค่ 3 รายการนี้ · ที่เหลือกรอกเองเพราะยอดไม่เท่ากันทุกเดือน */
+function deds(){return [{k:'sso',n:'ประกันสังคม',f:'sso'},{k:'pvd',n:'กองทุนสำรองเลี้ยงชีพ',f:'pvdM'},{k:'kyst',n:'กยศ.',f:'kyst'}]}
+/* บันทึกรายรับหมวด “เงินเดือน” ครั้งเดียว → ลงรายจ่าย 3 รายการหักให้เองในหน้ารายการ */
+function syncDeductions(){
+  var sal={},changed=false,DEDS=deds();
+  S.tx.forEach(function(t){if(t.type==='income'&&t.cat==='i1')sal[t.id]=t});
+  var keep=S.tx.filter(function(t){return !(t.ded&&t.pid&&!sal[t.pid])});
+  if(keep.length!==S.tx.length){S.tx=keep;changed=true}
+  Object.keys(sal).forEach(function(pid){
+    var s=sal[pid];if(s.dedDone)return;
+    DEDS.forEach(function(d){
+      var v=+S.profile[d.f]||0;if(!(v>0))return;
+      S.tx.push({id:uid(),type:'expense',amount:n2(v),cat:'c10',date:s.date,
+        note:d.n,ts:(s.ts||Date.now())+1,ded:d.k,pid:pid});
+    });
+    s.dedDone=1;changed=true;
+  });
+  return changed;
+}
+function dedTxOf(mk){return sum(txOf(mk).filter(function(t){return t.type==='expense'&&t.ded}),function(t){return t.amount})}
 function plan(mk){
   mk=mk||V.mk;
-  var p=S.profile,sal=salaryOf(mk);
-  var net=sal.v-(+p.sso||0)-(+p.pvdM||0)-(+p.kyst||0);
+  var p=S.profile,sal=salaryOf(mk),s=sums(mk);
+  var ded=(+p.sso||0)+(+p.pvdM||0)+(+p.kyst||0);
+  /* ถ้ายังไม่ได้บันทึกรายรับของรอบนี้ ใช้ยอดที่ตั้งไว้ในหน้าตั้งค่าเป็นตัวตั้ง (ยังไม่มีรายการหักในระบบ) */
+  var fInc=sal.auto?0:sal.v, fDed=sal.auto?0:(sal.v>0?ded:0);
+  var dedTx=dedTxOf(mk), dedAll=dedTx+fDed;
+  var inc=s.income+fInc, put=s.saving+s.invest, spentOther=s.expense-dedTx;
   var fixed=sum(p.fixed,function(x){return x.v});
   var save=(+p.plan.travel||0)+(+p.plan.partner||0)+(+p.plan.dca||0)+(+p.plan.emergency||0);
-  return {gross:sal.v,auto:sal.auto,net:sal.v>0?net:0,fixed:fixed,save:save,free:(sal.v>0?net:0)-fixed-save};
+  return {gross:sal.v,auto:sal.auto,ded:ded,dedAll:dedAll,net:sal.v>0?sal.v-ded:0,
+    inc:inc,put:put,spent:s.expense,spentOther:spentOther,fixed:fixed,save:save,
+    free:inc-(s.expense+put+fDed)};
 }
 function port(){
   var val=0,cost=0;
@@ -529,7 +558,7 @@ function activeDays(mk){
 function monthBudget(){
   var tot=sum(S.cats.expense,function(c){return +c.b||0});
   if(tot>0)return {v:tot,src:'งบตามหมวด'};
-  var pl=plan();return {v:Math.max(0,pl.free),src:'เงินพร้อมใช้'};
+  var pl=plan();return {v:Math.max(0,pl.net),src:'เงินเดือนสุทธิ'};
 }
 function dailyBudget(mk){var b=monthBudget(),d=activeDays(mk);return {v:d>0?b.v/d:0,src:b.src,days:d,month:b.v}}
 function spentOn(ds){return sum(S.tx.filter(function(t){return t.type==='expense'&&t.date===ds}),function(t){return t.amount})}
@@ -751,19 +780,19 @@ function vHome(){
   h+='<div class="grid g23">';
   h+='<div class="hero">'+
       '<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap"><span class="tag">รอบ '+esc(mShort(V.mk))+'</span>'+
-        '<span class="xs" style="margin-left:auto;color:rgba(233,244,241,.82)">'+(pl.net>0?'เงินเดือนสุทธิ '+m0(pl.net):'ยังไม่ได้ใส่เงินเดือน')+'</span></div>'+
+        '<span class="xs" style="margin-left:auto;color:rgba(233,244,241,.82)">'+(pl.gross>0?'เงินเดือนสุทธิ '+m0(pl.net):'ยังไม่ได้ใส่เงินเดือน')+'</span></div>'+
       '<div class="cap" style="margin:6px 0 0">'+esc(periodLabel(V.mk))+'</div>'+
-      (pl.net>0
-        ? '<div style="margin-top:12px"><div class="cap" style="margin:0">เงินพร้อมใช้หลังหักภาระและเป้าหมาย</div>'+
+      (pl.gross>0
+        ? '<div style="margin-top:12px"><div class="cap" style="margin:0">เงินคงเหลือของรอบนี้</div>'+
           '<span class="big num '+(pl.free<0?'neg':'')+'">'+m0(pl.free)+'</span>'+
           '<div class="cap" style="margin-top:4px">'+(pl.auto
-            ? 'จากรายการ “เงินเดือน” ที่บันทึกไว้ '+m0(pl.gross)+' — หัก ปกส. '+m0(S.profile.sso)+' · กองทุนฯ '+m0(S.profile.pvdM)+' · สหกรณ์ '+m0(S.profile.kyst)+' ให้อัตโนมัติแล้ว'
-            : 'จากเงินเดือนที่ตั้งไว้ในหน้าตั้งค่า '+m0(pl.gross)+' — บันทึกรายรับหมวด “เงินเดือน” แล้วระบบจะใช้ยอดจริงแทนให้เอง')+'</div></div>'
+            ? 'เงินเดือน '+m0(pl.gross)+' − หักอัตโนมัติ '+m0(pl.dedAll)+' (ปกส. · กองทุนฯ · กยศ. ลงรายการให้แล้ว) − ใช้ไป '+m0(pl.spentOther)+' − เก็บ/ลงทุน '+m0(pl.put)
+            : 'จากเงินเดือนที่ตั้งไว้ในหน้าตั้งค่า '+m0(pl.gross)+' หักอัตโนมัติ '+m0(pl.ded)+' — บันทึกรายรับหมวด “เงินเดือน” แล้วระบบจะใช้ยอดจริงและลงรายการหักให้เอง')+'</div></div>'
         : '<div style="margin-top:12px"><div class="cap" style="margin:0">ยังไม่ได้ใส่เงินเดือนของรอบนี้</div>'+
           '<span class="big num">—</span>'+
-          '<div class="cap" style="margin-top:4px">กด “บันทึกรายการ” เลือกรายรับ → หมวดเงินเดือน ระบบจะหักประกันสังคม กองทุนสำรองฯ และสหกรณ์ให้อัตโนมัติ</div></div>')+
-      '<div class="foot"><div><div class="k">ภาระประจำ</div><div class="v num">'+m0(pl.fixed)+'</div></div>'+
-        '<div><div class="k">เก็บและลงทุน</div><div class="v num">'+m0(pl.save)+'</div></div>'+
+          '<div class="cap" style="margin-top:4px">กด “บันทึกรายการ” เลือกรายรับ → หมวดเงินเดือน ระบบจะหักประกันสังคม กองทุนสำรองฯ และ กยศ. ให้อัตโนมัติ ส่วนที่เหลือกรอกเองตามจริง</div></div>')+
+      '<div class="foot"><div><div class="k">ใช้ไปแล้ว</div><div class="v num">'+m0(pl.spentOther)+'</div></div>'+
+        '<div><div class="k">เก็บและลงทุน</div><div class="v num">'+m0(pl.put)+'</div></div>'+
         '<button class="btn deep" data-a="addtx" style="background:rgba(255,255,255,.16)">＋ บันทึกรายการ</button></div>'+
     '</div>';
   h+='<div class="card nw"><div class="hd"><div><div class="eyebrow">สถานะการเงินปัจจุบัน</div><h3>มูลค่าสุทธิ</h3></div>'+
@@ -788,11 +817,12 @@ function vHome(){
   h+=dailyCard();
 
   h+='<div class="grid g2">';
-  var seg=[{n:'ภาระประจำ',v:pl.fixed,c:SERIES[0]},{n:'เงินเก็บ + DCA',v:pl.save,c:SERIES[2]},{n:'เงินพร้อมใช้',v:Math.max(0,pl.free),c:SERIES[3]}];
+  var seg=[{n:'หักอัตโนมัติ',v:pl.dedAll,c:SERIES[1]},{n:'ใช้จ่ายจริง',v:pl.spentOther,c:SERIES[0]},
+           {n:'เก็บ + ลงทุน',v:pl.put,c:SERIES[2]},{n:'คงเหลือ',v:Math.max(0,pl.free),c:SERIES[3]}];
   var totSeg=sum(seg,function(x){return x.v});
-  h+='<div class="card"><div class="hd"><div><div class="eyebrow">วางแผนอัตโนมัติ</div><h3>เงินเดือนถูกแบ่งไปไหน</h3></div>'+
-      '<div class="act"><span class="xs fnt">'+(pl.net>0?'จากสุทธิ '+m0(pl.net):'ยังไม่ได้ตั้งเงินเดือน')+'</span></div></div>'+
-      '<div class="pad donut">'+donut(seg,totSeg>0?Math.round(Math.max(0,pl.free)/totSeg*100)+'%':'—','พร้อมใช้')+legend(seg)+'</div></div>';
+  h+='<div class="card"><div class="hd"><div><div class="eyebrow">จากยอดจริงที่บันทึก</div><h3>เงินรอบนี้ไปไหนบ้าง</h3></div>'+
+      '<div class="act"><span class="xs fnt">'+(pl.inc>0?'จากรายรับ '+m0(pl.inc):'ยังไม่มีรายรับในรอบนี้')+'</span></div></div>'+
+      '<div class="pad donut">'+donut(seg,totSeg>0?Math.round(Math.max(0,pl.free)/totSeg*100)+'%':'—','คงเหลือ')+legend(seg)+'</div></div>';
 
   var eg=b.emergencyTarget>0?Math.min(100,(+b.emergency||0)/b.emergencyTarget*100):0;
   h+='<div class="card"><div class="hd"><div><div class="eyebrow">เป้าหมายสำคัญ</div><h3>เงินสำรองฉุกเฉิน</h3></div></div>'+
@@ -887,7 +917,7 @@ function notices(){
     if(over.length)out.push(note('crit','⚠️','ใช้เกินงบแล้ว: '+over.join(', '),'ปรับงบหรือลดรายจ่ายหมวดนี้','tab:tx','ดูงบ'));
     else if(near.length)out.push(note('warn','🔔','ใกล้เต็มงบ (80%+): '+near.join(', '),'เหลืองบไม่มากแล้วเดือนนี้','tab:tx','ดูงบ'));
     var pl=plan();
-    if(pl.free<0)out.push(note('crit','📉','แผนเดือนนี้ติดลบ '+m0(-pl.free),'ภาระและเป้าหมายรวมมากกว่าเงินเดือนสุทธิ','tab:set','แก้แผน'));
+    if(pl.gross>0&&pl.free<0)out.push(note('crit','📉','รอบนี้ใช้เกินเงินที่เข้ามาแล้ว '+m0(-pl.free),'รายจ่าย เงินเก็บ และลงทุนที่บันทึกไว้ รวมมากกว่ารายรับของรอบนี้','tab:tx','ดูรายการ'));
   }
   return out.join('');
 }
@@ -899,7 +929,7 @@ function note(kind,ic,title,sub,act,label){
 function txRow(t){
   var c=cat(t.type,t.cat),ty=TYPES[t.type]||TYPES.expense;
   return '<div class="item"><div class="ico">'+esc(c.e)+'</div><div class="mid">'+
-    '<div class="t">'+esc(t.note||c.n)+'</div><div class="s">'+esc(c.n)+' · '+dLabel(t.date)+'</div></div>'+
+    '<div class="t">'+esc(t.note||c.n)+'</div><div class="s">'+esc(c.n)+' · '+dLabel(t.date)+(t.ded?' · หักอัตโนมัติ':'')+'</div></div>'+
     '<div class="amt num '+ty.c+'">'+ty.s+money(t.amount)+'</div>'+
     '<div class="tools"><button data-a="edittx" data-id="'+t.id+'" aria-label="แก้ไข">✎</button>'+
     '<button data-a="deltx" data-id="'+t.id+'" aria-label="ลบ">🗑</button></div></div>';
@@ -1149,7 +1179,7 @@ function vSet(){
     '</div><div class="hint" style="margin-top:7px">โหมดเต็มหน้าจอจะย่อหน้าเว็บให้กว้างเท่าคอมพิวเตอร์ เห็นเมนูด้านซ้ายและการ์ดสองคอลัมน์พร้อมกัน ตัวหนังสือจะเล็กลง ซูมนิ้วขยายดูได้ · ตั้งค่านี้แยกของแต่ละเครื่อง</div></div></div></div>';
 
   h+='<div class="card"><div class="setsec">'+
-    lead('รายรับและรายการหัก','บันทึกรายรับหมวด “เงินเดือน” ครั้งเดียว ระบบหักทั้ง 3 รายการให้อัตโนมัติ')+
+    lead('รายรับและรายการหัก','บันทึกรายรับหมวด “เงินเดือน” ครั้งเดียว ระบบหัก 3 รายการนี้ให้อัตโนมัติ — นอกจากนี้ไม่หักอะไรอีก')+
     '<div><div class="fgrid">'+fld('เงินเดือน','p.salary',p.salary)+fld('ประกันสังคม / เดือน','p.sso',p.sso)+
       fld('กองทุนสำรองเลี้ยงชีพ / เดือน','p.pvdM',p.pvdM)+fld('กยศ. / เดือน','p.kyst',p.kyst)+'</div>'+
       '<div style="margin-top:12px;padding:11px 13px;border:1px solid var(--line);border-radius:12px;display:flex;flex-wrap:wrap;gap:10px;align-items:baseline">'+
@@ -1157,11 +1187,12 @@ function vSet(){
         '<span class="sm neg">− หัก <b class="num">'+m0((+p.sso||0)+(+p.pvdM||0)+(+p.kyst||0))+'</b></span>'+
         '<span class="sm" style="margin-left:auto">เงินเดือนสุทธิ <b class="num">'+m0(pl.net)+'</b></span></div>'+
       '<div class="hint" style="margin-top:7px">ช่อง “เงินเดือน” ด้านบนเป็นค่าตั้งต้นสำหรับวางแผน — พอบันทึกรายรับหมวด “เงินเดือน” ในรอบไหน ระบบจะใช้ยอดจริงของรอบนั้นแทนทันที ไม่ต้องมากรอกซ้ำ</div>'+
+      '<div class="hint" style="margin-top:7px">ทั้ง 3 รายการนี้จะถูกลงเป็น <b>รายจ่ายหมวด “หักจากเงินเดือน”</b> ให้อัตโนมัติในหน้ารายการ (แก้ยอดหรือลบทีหลังได้) · ค่าใช้จ่ายอื่น ๆ ระบบจะไม่หักให้ ต้องบันทึกเองตามยอดจริงของเดือนนั้น</div>'+
       '<div class="hint" style="margin-top:7px">กองทุนสำรองเลี้ยงชีพ '+m0(p.pvdM)+' ที่หักจากเงินเดือน จะถูกบวกเข้าพอร์ตกองทุนให้ทุกเดือน พร้อมเงินสมทบนายจ้างอีก '+m0(p.pvd.employer)+' รวมเดือนละ '+m0(pvdMonthly())+' (เงินสมทบนายจ้างเป็นเงินเพิ่ม ไม่ได้หักจากเงินเดือนเรา)</div>'+
       '</div></div></div>';
 
   h+='<div class="card"><div class="setsec">'+
-    lead('ค่าใช้จ่ายประจำ','ภาระที่ต้องจ่ายทุกเดือน รวม '+m0(pl.fixed))+
+    lead('ค่าใช้จ่ายประจำ (ไว้ดูเป็นแนวทาง)','ไม่ได้หักอัตโนมัติ — ยอดจริงแต่ละเดือนไม่เท่ากัน ให้บันทึกเองในหน้ารายการ · ที่ตั้งไว้รวม '+m0(pl.fixed))+
     '<div><div class="fgrid">'+p.fixed.map(function(f){
       return '<div><label for="fx_'+f.id+'">'+esc(f.n)+'</label><div style="display:flex;gap:6px">'+
         '<input id="fx_'+f.id+'" type="number" inputmode="decimal" data-k="fixed" data-id="'+f.id+'" value="'+(+f.v||0)+'">'+
@@ -1170,7 +1201,7 @@ function vSet(){
     '<div style="margin-top:12px"><button class="btn sm ghost" data-a="addfix">＋ เพิ่มค่าใช้จ่ายประจำ</button></div></div></div></div>';
 
   h+='<div class="card"><div class="setsec">'+
-    lead('เป้าหมายรายเดือน','เงินที่ตั้งใจแยกเก็บและลงทุน รวม '+m0(pl.save))+
+    lead('เป้าหมายรายเดือน','เป้าที่ตั้งใจเก็บ ไม่ได้หักอัตโนมัติ — บันทึกเองเมื่อโอนจริง · รวม '+m0(pl.save))+
     '<div><div class="fgrid">'+fld('เก็บไปเที่ยว','p.plan.travel',p.plan.travel)+fld('เงินเก็บกับแฟน (ไม่บังคับขั้นต่ำ)','p.plan.partner',p.plan.partner)+
       fld('DCA ต่อเดือน','p.plan.dca',p.plan.dca)+fld('เก็บฉุกเฉิน','p.plan.emergency',p.plan.emergency)+'</div>'+
       '<div class="hint" style="margin-top:7px">ยอด DCA นี้จะถูกแบ่งตามสัดส่วน % ที่ตั้งไว้ในหน้าพอร์ตลงทุนโดยอัตโนมัติ</div></div></div></div>';
@@ -1481,7 +1512,7 @@ function csvPort(){
 }
 
 /* ---------- events ---------- */
-function commit(){touch();render()}
+function commit(){syncDeductions();touch();render()}
 function setPath(path,val){
   var p=S.profile;
   if(path==='s.usdthb'){S.settings.usdthb=val;return}
@@ -1504,8 +1535,10 @@ document.addEventListener('click',function(e){
     else if(a==='addtx')txSheet(null);
     else if(a==='edittx')txSheet(S.tx.find(function(x){return x.id===id}));
     else if(a==='deltx'){var tx=S.tx.find(function(x){return x.id===id});
-      confirmSheet('ลบรายการ','ลบ “'+esc(tx.note||cat(tx.type,tx.cat).n)+'” จำนวน '+money(tx.amount)+' ออกถาวรหรือไม่',
-        function(){S.tx=S.tx.filter(function(x){return x.id!==id});commit()})}
+      var isSal=!!(tx&&tx.type==='income'&&tx.cat==='i1');
+      confirmSheet('ลบรายการ','ลบ “'+esc(tx.note||cat(tx.type,tx.cat).n)+'” จำนวน '+money(tx.amount)+' ออกถาวรหรือไม่'+
+          (isSal?' — รายการหักอัตโนมัติที่มากับเงินเดือนก้อนนี้จะถูกลบไปด้วย':''),
+        function(){S.tx=S.tx.filter(function(x){return x.id!==id&&!(isSal&&x.pid===id)});commit()})}
     else if(a==='addh')hSheet(null);
     else if(a==='edith')hSheet(S.holdings.find(function(x){return x.id===id}));
     else if(a==='delh'){var hh=S.holdings.find(function(x){return x.id===id});
