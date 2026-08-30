@@ -294,7 +294,7 @@ function seed(){
       fixed:[{id:'f1',n:'ค่าหอ',v:0},{id:'f2',n:'ค่ามือถือ',v:0},{id:'f3',n:'ใช้หนี้',v:0},
              {id:'f4',n:'ผ่อนคอม',v:0},{id:'f5',n:'ค่ากิน (ฟิกซ์)',v:0},{id:'f6',n:'ค่าใช้จ่ายอื่นๆ',v:0}],
       plan:{travel:0,partner:0,dca:0,emergency:0},
-      pvd:{principal:0,ret:0,amc:'KBANK',code:'PF3103',nav:0,units:0,navDate:''},
+      pvd:{principal:0,ret:0,amc:'KBANK',code:'PF3103',nav:0,units:0,navDate:'',employer:0},
       bal:{cash:0,emergency:0,emergencyTarget:0,travel:0,partner:0,debt:0,wht:0}
     },
     dca:[{id:'d1',sym:'VOO',pct:40},{id:'d2',sym:'NVDA',pct:12},{id:'d3',sym:'GOOGL',pct:10},{id:'d4',sym:'AMZN',pct:10},{id:'d5',sym:'META',pct:10},{id:'d6',sym:'SPCX',pct:10},{id:'d7',sym:'TSLA',pct:5},{id:'d8',sym:'CRCL',pct:3}],
@@ -342,6 +342,7 @@ function migrate(s){
     var bp=base.profile.pvd;
     if(!s.profile.pvd.code){s.profile.pvd.amc=bp.amc;s.profile.pvd.code=bp.code;}
     if(s.profile.pvd.nav===undefined){s.profile.pvd.nav=0;s.profile.pvd.units=0;s.profile.pvd.navDate='';}
+    if(s.profile.pvd.employer===undefined)s.profile.pvd.employer=(+s.profile.pvdM||0);
   }
   if(s.cats&&s.cats.expense&&!s.cats.expense.some(function(c){return c.id==='c9'}))
     s.cats.expense.push({id:'c9',n:'ภาษีหัก ณ ที่จ่าย',e:'🧮',b:0});
@@ -460,7 +461,8 @@ function monthsSinceStart(){
   var n=(+b[0]-+a[0])*12+(+b[1]-+a[1])+1;
   return Math.max(0,n);
 }
-function pvdContrib(){return (+S.profile.pvdM||0)*monthsSinceStart()}
+function pvdMonthly(){return (+S.profile.pvdM||0)+(+S.profile.pvd.employer||0)}
+function pvdContrib(){return pvdMonthly()*monthsSinceStart()}
 function pvdPrincipal(){return (+S.profile.pvd.principal||0)+pvdContrib()}
 function pvdValue(){
   var p=S.profile.pvd;
@@ -777,7 +779,7 @@ function vHome(){
       '<span class="num" style="font-size:28px">'+m0(p.val+w.pvd)+'</span>'+
       '<div class="sm fnt" style="margin-top:4px">รวมในมูลค่าสุทธิแล้ว</div>'+
       '<div class="grid g2" style="margin-top:14px;gap:10px">'+
-        miniBox('กองทุนสำรองฯ',m0(w.pvd),S.profile.pvd.amc+' '+S.profile.pvd.code,SERIES[2])+
+        miniBox('กองทุนสำรองฯ',m0(w.pvd),'เข้าเดือนละ '+m0(pvdMonthly())+' (เรา+นายจ้าง)',SERIES[2])+
         miniBox('พอร์ตหุ้น',m0(p.val),'DCA '+m0(dcaTotal())+' / เดือน',SERIES[0])+
       '</div></div></div>';
   h+='</div>';
@@ -947,8 +949,9 @@ function vPort(){
   h+='<div class="grid g3">'+
     statCard('◔','พอร์ตหุ้นปัจจุบัน',money(p.val),'', S.holdings.length+' สินทรัพย์ · USD/THB '+rate().toFixed(2))+
     statCard('◎','กองทุนสำรองเลี้ยงชีพ',m0(pv),'',S.profile.pvd.amc+' '+S.profile.pvd.code+' · เงินต้น '+m0(pvdPrincipal())+' + ผลประโยชน์ '+m0(pv-pvdPrincipal()))+
-    statCard('▤','ออมและลงทุนเดือนนี้',m0(started()?dcaTotal()+(+S.profile.pvdM||0):0),'',
-      started()?'DCA '+m0(dcaTotal())+' + กองทุนสำรองฯ '+m0(S.profile.pvdM):'เริ่มนับ '+dLabel(startD()))+
+    statCard('▤','ออมและลงทุนเดือนนี้',m0(started()?dcaTotal()+pvdMonthly():0),'',
+      started()?'DCA '+m0(dcaTotal())+' → พอร์ตหุ้น · กองทุนฯ '+m0(pvdMonthly())+' (เรา '+m0(S.profile.pvdM)+' + นายจ้าง '+m0(S.profile.pvd.employer)+') → พอร์ตกองทุน'
+               :'เริ่มนับ '+dLabel(startD()))+
   '</div>';
 
   var alloc=p.rows.map(function(r,i){return {n:r.h.symbol,v:r.valThb,c:SERIES[i%SERIES.length]}});
@@ -1054,7 +1057,7 @@ function vSet(){
         '<span class="sm mut">เงินเดือน <b class="num">'+m0(p.salary)+'</b></span>'+
         '<span class="sm neg">− หัก <b class="num">'+m0((+p.sso||0)+(+p.pvdM||0)+(+p.kyst||0))+'</b></span>'+
         '<span class="sm" style="margin-left:auto">เงินเดือนสุทธิ <b class="num">'+m0(pl.net)+'</b></span></div>'+
-      '<div class="hint" style="margin-top:7px">กองทุนสำรองเลี้ยงชีพ '+m0(p.pvdM)+' ต่อเดือน จะถูกบวกเข้าพอร์ตกองทุนให้อัตโนมัติทุกเดือนตั้งแต่วันเริ่มบันทึก</div>'+
+      '<div class="hint" style="margin-top:7px">กองทุนสำรองเลี้ยงชีพ '+m0(p.pvdM)+' ที่หักจากเงินเดือน จะถูกบวกเข้าพอร์ตกองทุนให้ทุกเดือน พร้อมเงินสมทบนายจ้างอีก '+m0(p.pvd.employer)+' รวมเดือนละ '+m0(pvdMonthly())+' (เงินสมทบนายจ้างเป็นเงินเพิ่ม ไม่ได้หักจากเงินเดือนเรา)</div>'+
       '</div></div></div>';
 
   h+='<div class="card"><div class="setsec">'+
@@ -1076,11 +1079,15 @@ function vSet(){
     lead('กองทุนสำรองเลี้ยงชีพ',p.pvd.amc+' รหัสกองทุน '+p.pvd.code+' — เงินต้นและผลประโยชน์รวมอยู่ในมูลค่าพอร์ต')+
     '<div><div class="fgrid">'+fld('เงินต้นตั้งต้น (ก่อนวันเริ่มบันทึก)','p.pvd.principal',p.pvd.principal)+
       fld('ผลประโยชน์ / ผลตอบแทน (%)','p.pvd.ret',p.pvd.ret)+
+      fld('เงินสะสมของเรา / เดือน (หักจากเงินเดือน)','p.pvdM',p.pvdM)+
+      fld('เงินสมทบนายจ้าง / เดือน','p.pvd.employer',p.pvd.employer)+
       fld('NAV ล่าสุดต่อหน่วย (ถ้ามี)','p.pvd.nav',p.pvd.nav)+
       fld('จำนวนหน่วยที่ถือ (ถ้ามี)','p.pvd.units',p.pvd.units)+'</div>'+
       '<div style="margin-top:12px;padding:11px 13px;border:1px solid var(--line);border-radius:12px">'+
-        '<div class="sm">เงินต้นสะสมตอนนี้ <b class="num">'+m0(pvdPrincipal())+'</b>'+
-        ' <span class="fnt">(ตั้งต้น '+m0(p.pvd.principal)+' + สะสม '+monthsSinceStart()+' เดือน × '+m0(p.pvdM)+')</span></div>'+
+        '<div class="sm">เข้ากองทุนเดือนละ <b class="num">'+m0(pvdMonthly())+'</b> '+
+        '<span class="fnt">(ของเรา '+m0(p.pvdM)+' + นายจ้าง '+m0(p.pvd.employer)+')</span></div>'+
+        '<div class="sm" style="margin-top:3px">เงินต้นสะสมตอนนี้ <b class="num">'+m0(pvdPrincipal())+'</b>'+
+        ' <span class="fnt">(ตั้งต้น '+m0(p.pvd.principal)+' + '+monthsSinceStart()+' เดือน × '+m0(pvdMonthly())+')</span></div>'+
         '<div class="sm" style="margin-top:3px">มูลค่ารวม <b class="num">'+m0(pvdValue())+'</b> '+
         ((+p.pvd.units||0)>0&&(+p.pvd.nav||0)>0?'<span class="fnt">คิดจากหน่วย × NAV</span>':'<span class="fnt">คิดจากเงินต้น × ผลตอบแทน</span>')+'</div></div>'+
       '<div class="hint" style="margin-top:7px">ถ้ากรอกทั้ง NAV และจำนวนหน่วย ระบบจะใช้ หน่วย × NAV แทนการคิดจากเปอร์เซ็นต์</div></div></div></div>';

@@ -1,5 +1,5 @@
 /* ยอดดอย service worker — เปิดใช้งานได้แม้ออฟไลน์ */
-var CACHE = 'yoddoi-v6';
+var CACHE = 'yoddoi-v7';
 var SHELL = ['./', './index.html', './manifest.webmanifest', './icon-192.png', './icon-512.png',
              './icon-maskable-192.png', './icon-maskable-512.png', './apple-touch-icon.png', './favicon.png'];
 self.addEventListener('install', function (e) {
