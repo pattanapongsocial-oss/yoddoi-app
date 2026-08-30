@@ -593,19 +593,30 @@ function syncPull(cb){
   },function(e){sync.state='err';sync.msg=(e&&e.message)||'ดึงข้อมูลไม่สำเร็จ';flag();if(cb)cb(e)});
 }
 var pushT=null;
-function syncPush(cb){
+function syncPush(cb,tries){
   if(!syncOn()){if(cb)cb();return}
   sync.state='busy';flag();
   fetch(syncURL('_='+Date.now()),{method:'POST',headers:{'Content-Type':'text/plain;charset=utf-8'},
-    body:JSON.stringify(S)}).then(function(r){return r.json()}).then(function(j){
+    body:JSON.stringify(S),keepalive:true}).then(function(r){return r.json()}).then(function(j){
     if(!j||j.error)throw new Error((j&&j.error)||'บันทึกไม่สำเร็จ');
     sync.state='ok';sync.at=Date.now();sync.msg='';saveSyncCfg();flag();if(cb)cb(null);
-  },function(e){sync.state='err';sync.msg=(e&&e.message)||'ส่งข้อมูลไม่สำเร็จ';flag();if(cb)cb(e)});
+  },function(e){
+    var n=(tries||0)+1;
+    if(n<=3){sync.state='busy';flag();setTimeout(function(){syncPush(cb,n)},n*4000);return}
+    sync.state='err';sync.msg=(e&&e.message)||'ส่งข้อมูลไม่สำเร็จ';flag();if(cb)cb(e);
+  });
 }
 function queuePush(){
   if(!syncOn())return;
-  clearTimeout(pushT);pushT=setTimeout(function(){syncPush()},1500);
+  clearTimeout(pushT);pushT=setTimeout(function(){pushT=null;syncPush()},1200);
 }
+function flushPush(){ if(syncOn()&&pushT){clearTimeout(pushT);pushT=null;syncPush()} }
+function busyUI(){
+  if(document.querySelector('.scrim'))return true;
+  var t=(document.activeElement||{}).tagName;
+  return t==='INPUT'||t==='TEXTAREA'||t==='SELECT';
+}
+function autoPull(){ if(syncOn()&&!document.hidden&&!busyUI()&&sync.state!=='busy')syncPull(); }
 function syncLabel(){
   if(!syncOn())return null;
   if(sync.state==='busy')return ['busy','กำลังซิงก์','กับ Google Drive'];
@@ -1024,7 +1035,7 @@ function vSet(){
       (syncOn()
         ? 'สถานะ: '+esc(sync.state==='err'?('ผิดพลาด — '+sync.msg):(sync.state==='busy'?'กำลังซิงก์…':'พร้อมใช้งาน'))+
           (sync.at?' · ล่าสุด '+esc(new Date(sync.at).toLocaleString('th-TH')):'')+
-          '<br>ทุกครั้งที่แก้ข้อมูล ระบบจะส่งขึ้น Drive ให้เอง และดึงลงมาตอนเปิดแอป ถ้าสองเครื่องแก้พร้อมกัน ตัวที่แก้ทีหลังจะชนะ'
+          '<br>ทำงานอัตโนมัติทั้งหมด — แก้อะไรก็ส่งขึ้น Drive ให้เองใน 1 วินาที และดึงข้อมูลใหม่ทุกครั้งที่กลับเข้าแอป ทุก 1 นาทีระหว่างเปิดอยู่ และเมื่อเน็ตกลับมา · ปุ่มด้านบนมีไว้สั่งเองเวลาต้องการเท่านั้น'
         : 'ลิงก์นี้เก็บไว้ในเครื่องนี้เท่านั้น ไม่ถูกฝังลงไฟล์บนเว็บ · ต้องวางลิงก์เดียวกันในทุกเครื่องที่อยากให้ข้อมูลตรงกัน')+
     '</div></div></div></div>';
 
@@ -1456,6 +1467,12 @@ document.addEventListener('keydown',function(e){
 applyView();
 render();
 if(syncOn())setTimeout(function(){syncPull()},400);
+document.addEventListener('visibilitychange',function(){
+  if(document.hidden)flushPush();else setTimeout(autoPull,300);
+});
+window.addEventListener('pagehide',flushPush);
+window.addEventListener('online',function(){flushPush();setTimeout(autoPull,800)});
+setInterval(autoPull,60000);
 /* เวอร์ชันที่โฮสต์เอง: ดึงราคาตลาดให้เองวันละครั้ง */
 if(HOSTED&&S.settings.autoPrice&&S.holdings.length&&S.settings.lastAuto!==today()&&typeof fetch==='function'){
   setTimeout(function(){
