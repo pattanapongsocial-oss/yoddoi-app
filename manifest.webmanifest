@@ -1,6 +1,6 @@
 {
-  "name": "ยอดดอย · การเงินของฉัน",
-  "short_name": "ยอดดอย",
+  "name": "My Money · การเงินของฉัน",
+  "short_name": "My Money",
   "description": "แผนเงินเดือน มูลค่าสุทธิ รายรับ-รายจ่าย และพอร์ตลงทุนในหน้าเดียว",
   "start_url": "./index.html",
   "scope": "./",
