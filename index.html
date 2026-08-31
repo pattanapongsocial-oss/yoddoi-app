@@ -172,7 +172,9 @@ main{max-width:1120px;margin:0 auto;padding:20px 16px 108px;display:flex;flex-di
 .dlegend .l{display:flex;align-items:center;gap:8px;padding:8px 0;border-top:1px solid var(--line);font-size:13.5px}
 .dlegend .l:first-child{border-top:none}
 .dlegend .sw{width:9px;height:9px;border-radius:3px;flex:none}
-.dlegend .nm{flex:1 1 auto;min-width:40px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.dlegend .nm{flex:1 1 auto;min-width:80px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.dlegend .nm b{display:block;line-height:1.25;font-weight:600}
+.dlegend .nm .sub{display:block;font-size:11px;line-height:1.3;color:var(--faint);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .dlegend .pc{color:var(--faint);font-size:12px}
 .dlegend .vv{margin-left:auto;white-space:nowrap}
 
@@ -319,7 +321,7 @@ function seed(){
       saving:[{id:'s1',n:'เงินสำรองฉุกเฉิน',e:'🛟',b:0},{id:'s2',n:'เก็บไปเที่ยว',e:'✈️',b:0},{id:'s3',n:'เงินเก็บกับแฟน',e:'💝',b:0},{id:'s4',n:'ออมอื่นๆ',e:'🏦',b:0}],
       invest:[{id:'v1',n:'DCA',e:'📊',b:0},{id:'v2',n:'ซื้อหุ้นเพิ่ม',e:'📈',b:0},{id:'v3',n:'กองทุน',e:'🏛️',b:0}]
     },
-    tx:[],goals:[]};
+    names:{},tx:[],goals:[]};
 }
 /* เวอร์ชันที่เอาขึ้นเว็บสาธารณะ: ไม่ฝังตัวเลขส่วนตัวไว้ในไฟล์ */
 function blankify(o){
@@ -377,7 +379,7 @@ function migrate(s){
   s.profile.bal=s.profile.bal||base.profile.bal;
   s.profile.pvd=s.profile.pvd||base.profile.pvd;
   s.profile.fixed=s.profile.fixed||base.profile.fixed;
-  s.dca=s.dca||base.dca;s.tx=s.tx||[];s.goals=s.goals||[];s.holdings=s.holdings||[];
+  s.dca=s.dca||base.dca;s.tx=s.tx||[];s.goals=s.goals||[];s.holdings=s.holdings||[];s.names=s.names||{};
   return s;
 }
 
@@ -536,15 +538,43 @@ function pvdValue(){
 function dcaTotal(){return +S.profile.plan.dca||0}
 function dcaPctSum(){return sum(S.dca,function(d){return +d.pct||0})}
 function dcaAmt(d){return dcaTotal()*(+d.pct||0)/100}
+/* ---------- ชื่อเต็มของหุ้น/กองทุน ---------- */
+var SYMN={VOO:'Vanguard S&P 500 ETF',IVV:'iShares Core S&P 500 ETF',SPY:'SPDR S&P 500 ETF Trust',
+  QQQ:'Invesco QQQ Trust',EWY:'iShares MSCI South Korea ETF',VTI:'Vanguard Total Stock Market ETF',
+  NVDA:'NVIDIA Corporation',GOOGL:'Alphabet Inc. (Google)',GOOG:'Alphabet Inc. (Google)',
+  AMZN:'Amazon.com, Inc.',META:'Meta Platforms, Inc.',TSLA:'Tesla, Inc.',AAPL:'Apple Inc.',
+  MSFT:'Microsoft Corporation',AMD:'Advanced Micro Devices',MU:'Micron Technology, Inc.',
+  RKLB:'Rocket Lab Corporation',CRCL:'Circle Internet Group, Inc.',
+  AVGO:'Broadcom Inc.',TSM:'Taiwan Semiconductor (TSMC)',NFLX:'Netflix, Inc.',
+  PLTR:'Palantir Technologies',COIN:'Coinbase Global, Inc.'};
+/* ชื่อที่ผู้ใช้กรอกเองมาก่อน แล้วค่อยชื่อที่ดึงมาจากตลาด แล้วค่อยรายชื่อในตัวแอป */
+function symName(sym,own){
+  var s=(sym||'').trim().toUpperCase().replace(/\.BK$/,'');
+  if(own&&String(own).trim())return String(own).trim();
+  if(S.names&&S.names[s])return S.names[s];
+  return SYMN[s]||'';
+}
+function symFull(sym,own){var n=symName(sym,own);return n?(sym+' · '+n):sym}
+function rememberName(sym,n){
+  if(!n)return;var s=(sym||'').trim().toUpperCase().replace(/\.BK$/,'');
+  S.names=S.names||{};if(S.names[s]!==n){S.names[s]=n;return true}return false;
+}
 function partnerHoldings(){return S.holdings.filter(function(h){return h.tag==='partner'})}
+/* เงินเก็บที่บันทึกเป็นรายการ “เงินเก็บ” จะสะสมเข้ายอดของเป้าหมายนั้นเองอัตโนมัติ */
+function savedCat(cid){return sum(S.tx.filter(function(t){return t.type==='saving'&&t.cat===cid&&t.date>=startD()}),function(t){return t.amount})}
+function balOf(k,cid){return (+S.profile.bal[k]||0)+savedCat(cid)}
+function balEmg(){return balOf('emergency','s1')}
+function balTrv(){return balOf('travel','s2')}
+function balPtn(){return balOf('partner','s3')}
+function balEtc(){return savedCat('s4')}
 function partnerValue(){
-  var v=(+S.profile.bal.partner||0);
+  var v=balPtn();
   partnerHoldings().forEach(function(h){v+=thb((+h.qty||0)*(+h.price||0),h.cur)});
   return v;
 }
 function wealth(){
   var b=S.profile.bal,p=port(),pv=pvdValue();
-  var assets=(+b.cash||0)+(+b.emergency||0)+(+b.travel||0)+(+b.partner||0)+p.val+pv;
+  var assets=(+b.cash||0)+balEmg()+balTrv()+balPtn()+balEtc()+p.val+pv;
   return {assets:assets,debt:(+b.debt||0),net:assets-(+b.debt||0),port:p,pvd:pv};
 }
 function priceStale(){if(!S.holdings.length)return 999;var d=0;S.holdings.forEach(function(h){d=Math.max(d,daysAgo(h.updated))});return d}
@@ -583,6 +613,7 @@ function readChart(j,sym){
   var m=j&&j.chart&&j.chart.result&&j.chart.result[0]&&j.chart.result[0].meta;
   var p=m&&(m.regularMarketPrice||m.previousClose||m.chartPreviousClose);
   if(!(p>0))throw new Error('ไม่พบราคาของ '+sym);
+  if(m&&(m.longName||m.shortName))rememberName(sym,m.longName||m.shortName);
   return +p;
 }
 function tryChain(urls,parse){
@@ -632,7 +663,8 @@ function autoSheet(){
             : '<b>หน้านี้ดึงราคาจากอินเทอร์เน็ตไม่ได้</b><br>หน้าที่เผยแพร่บน claude.ai ถูกกันไม่ให้ติดต่อเว็บภายนอกทุกกรณี (ข้อความ “Failed to fetch” คือการถูกกันนั้น) '+
               'ใช้ปุ่มกรอกเองด้านล่าง หรือเปิดเวอร์ชัน PWA ที่โฮสต์เองเพื่อให้ดึงราคาอัตโนมัติได้');
         s.querySelector('#rows').innerHTML='<div class="list">'+res.map(function(r){
-          return '<div class="item"><div class="mid"><div class="t">'+esc(r.sym)+'</div>'+
+          var nm=r.cur==='RATE'?'':symName(r.sym);
+          return '<div class="item"><div class="mid"><div class="t">'+esc(r.sym)+(nm?' <span class="fnt">· '+esc(nm)+'</span>':'')+'</div>'+
             '<div class="s">'+(r.ok?(r.cur==='RATE'?'อัตราแลกเปลี่ยนล่าสุด':'ราคาตลาดล่าสุด'):esc(r.e))+'</div></div>'+
             '<div class="amt num '+(r.ok?'':'fnt')+'">'+(r.ok?(r.cur==='RATE'?r.p.toFixed(2):money(r.p,r.cur)):'—')+'</div></div>';
         }).join('')+'</div>';
@@ -729,12 +761,18 @@ function donut(items,center,sub,size){
     '<text x="'+R+'" y="'+(R-(sub?2:-5))+'" text-anchor="middle" font-family="IBM Plex Mono,monospace" font-size="'+(size>120?17:15)+'" font-weight="600" fill="var(--ink)">'+esc(center)+'</text>'+
     (sub?'<text x="'+R+'" y="'+(R+15)+'" text-anchor="middle" font-family="Anuphan,sans-serif" font-size="11" fill="var(--faint)">'+esc(sub)+'</text>':'')+'</svg>';
 }
+/* “VOO · Vanguard S&P 500 ETF” → ตัวย่อบรรทัดบน ชื่อเต็มบรรทัดล่าง */
+function nmHtml(n){
+  var i=String(n).indexOf(' · ');
+  if(i<0)return esc(n);
+  return '<b>'+esc(String(n).slice(0,i))+'</b><span class="sub">'+esc(String(n).slice(i+3))+'</span>';
+}
 function legend(items,fmt){
   var tot=sum(items,function(i){return i.v});
   return '<div class="dlegend">'+items.map(function(it,i){
     var pc=tot>0?(+it.v||0)/tot*100:0;
     return '<div class="l"><span class="sw" style="background:'+(it.c||SERIES[i%SERIES.length])+'"></span>'+
-      '<span class="nm">'+esc(it.n)+'</span><span class="pc num">'+pc.toFixed(pc<10?1:0)+'%</span>'+
+      '<span class="nm">'+nmHtml(it.n)+'</span><span class="pc num">'+pc.toFixed(pc<10?1:0)+'%</span>'+
       '<span class="vv num">'+(fmt?fmt(it):m0(it.v))+'</span></div>';
   }).join('')+'</div>';
 }
@@ -824,16 +862,19 @@ function vHome(){
       '<div class="act"><span class="xs fnt">'+(pl.inc>0?'จากรายรับ '+m0(pl.inc):'ยังไม่มีรายรับในรอบนี้')+'</span></div></div>'+
       '<div class="pad donut">'+donut(seg,totSeg>0?Math.round(Math.max(0,pl.free)/totSeg*100)+'%':'—','คงเหลือ')+legend(seg)+'</div></div>';
 
-  var eg=b.emergencyTarget>0?Math.min(100,(+b.emergency||0)/b.emergencyTarget*100):0;
+  var eg=b.emergencyTarget>0?Math.min(100,balEmg()/b.emergencyTarget*100):0;
   h+='<div class="card"><div class="hd"><div><div class="eyebrow">เป้าหมายสำคัญ</div><h3>เงินสำรองฉุกเฉิน</h3></div></div>'+
       '<div class="pad" style="padding-top:10px">'+
-      '<span class="num" style="font-size:28px">'+m0(b.emergency)+'</span>'+
+      '<span class="num" style="font-size:28px">'+m0(balEmg())+'</span>'+
+      '<div class="xs fnt" style="margin-top:4px">ตั้งต้น '+m0(b.emergency)+' + บันทึกไว้ '+m0(savedCat('s1'))+'</div>'+
       '<div class="bar" style="margin-top:10px"><div class="lin"><span class="sm mut">'+eg.toFixed(0)+'% ของเป้าหมาย</span><span class="v num sm">'+m0(b.emergencyTarget)+'</span></div>'+
       '<div class="track"><i style="width:'+eg.toFixed(1)+'%"></i></div></div>'+
       '<div class="grid g2" style="margin-top:14px;gap:10px">'+
-        miniGoal('เที่ยว',b.travel,'เก็บเดือนละ '+m0(S.profile.plan.travel))+
-        miniGoal('เงินเก็บกับแฟน',partnerValue(),'ลงทุนใน IVV · ไม่กำหนดขั้นต่ำ')+
-      '</div></div></div>';
+        miniGoal('เที่ยว',balTrv(),'ตั้งต้น '+m0(b.travel)+' + บันทึกไว้ '+m0(savedCat('s2')))+
+        miniGoal('เงินเก็บกับแฟน',partnerValue(),'เงินสด '+m0(balPtn())+' + IVV '+m0(partnerValue()-balPtn()))+
+      '</div>'+
+      '<div class="hint" style="margin-top:11px">บันทึกรายการแบบ “เงินเก็บ” เลือกหมวดไหน ยอดจะไปสะสมในเป้าหมายนั้นให้เองทันที</div>'+
+      '</div></div>';
   h+='</div>';
 
   var recent=S.tx.filter(function(t){return t.date>=startD()})
@@ -1083,7 +1124,7 @@ function vPort(){
                :'เริ่มนับ '+dLabel(startD()))+
   '</div>';
 
-  var alloc=p.rows.map(function(r,i){return {n:r.h.symbol,v:r.valThb,c:SERIES[i%SERIES.length]}});
+  var alloc=p.rows.map(function(r,i){return {n:symFull(r.h.symbol,r.h.name),v:r.valThb,c:SERIES[i%SERIES.length]}});
   h+='<div class="grid g2">'+
     '<div class="card"><div class="hd"><div><div class="eyebrow">สัดส่วนที่ถือจริง</div><h3>หุ้นในพอร์ต</h3></div>'+
       '<div class="act"><span class="pill '+(p.pl>=0?'up':'dn')+'">'+(p.pl>=0?'+':'')+p.plp.toFixed(2)+'%</span></div></div>'+
@@ -1095,9 +1136,9 @@ function vPort(){
     '<div class="card"><div class="hd"><div><div class="eyebrow">แผนระยะยาว</div><h3>สัดส่วน DCA รายเดือน</h3></div>'+
       '<div class="act"><button class="btn sm ghost" data-a="dcatotal">แก้ยอด DCA</button>'+
       '<button class="btn sm ghost" data-a="adddca">＋ เพิ่ม</button></div></div>'+
-      '<div class="pad donut">'+donut(S.dca.map(function(d,i){return {n:d.sym,v:dcaAmt(d),c:SERIES[i%SERIES.length]}}),m0(dcaTotal()),'ต่อเดือน')+
+      '<div class="pad donut">'+donut(S.dca.map(function(d,i){return {n:symFull(d.sym),v:dcaAmt(d),c:SERIES[i%SERIES.length]}}),m0(dcaTotal()),'ต่อเดือน')+
       '<div class="dlegend">'+S.dca.map(function(d,i){
-        return '<div class="l"><span class="sw" style="background:'+SERIES[i%SERIES.length]+'"></span><span class="nm">'+esc(d.sym)+'</span>'+
+        return '<div class="l"><span class="sw" style="background:'+SERIES[i%SERIES.length]+'"></span><span class="nm"><b>'+esc(d.sym)+'</b>'+(symName(d.sym)?'<span class="sub">'+esc(symName(d.sym))+'</span>':'')+'</span>'+
           '<span class="pc num">'+(+d.pct||0)+'%</span>'+
           '<span class="vv num">'+m0(dcaAmt(d))+'</span>'+
           '<div class="tools"><button data-a="editdca" data-id="'+d.id+'" aria-label="แก้ไข '+esc(d.sym)+'">✎</button></div></div>';
@@ -1120,7 +1161,7 @@ function vPort(){
       var x=r.h,st=daysAgo(x.updated);
       return '<div class="hold"><div class="hh">'+
         '<span class="av" style="background:'+SERIES[i%SERIES.length]+'">'+esc(x.symbol.slice(0,2))+'</span>'+
-        '<div style="min-width:0"><div class="sym">'+esc(x.symbol)+'</div><div class="xs fnt" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+esc(x.name||'—')+'</div></div>'+
+        '<div style="min-width:0"><div class="sym">'+esc(x.symbol)+'</div><div class="xs fnt" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+esc(symName(x.symbol,x.name)||'ยังไม่มีชื่อเต็ม')+'</div></div>'+
         '<div class="tools" style="margin-left:auto"><button data-a="edith" data-id="'+x.id+'" aria-label="แก้ไข">✎</button>'+
         '<button data-a="delh" data-id="'+x.id+'" aria-label="ลบ">🗑</button></div></div>'+
         '<div style="display:flex;align-items:baseline;gap:9px;margin-top:11px;flex-wrap:wrap">'+
@@ -1224,10 +1265,12 @@ function vSet(){
       '<div class="hint" style="margin-top:7px">ถ้ากรอกทั้ง NAV และจำนวนหน่วย ระบบจะใช้ หน่วย × NAV แทนการคิดจากเปอร์เซ็นต์</div></div></div></div>';
 
   h+='<div class="card"><div class="setsec">'+
-    lead('ยอดปัจจุบัน','ทำให้มูลค่าสุทธิสะท้อนความจริง')+
-    '<div class="fgrid">'+fld('เงินสด / เงินในบัญชี','p.bal.cash',p.bal.cash)+fld('เงินฉุกเฉินสะสม','p.bal.emergency',p.bal.emergency)+
-      fld('เป้าหมายเงินฉุกเฉิน','p.bal.emergencyTarget',p.bal.emergencyTarget)+fld('เงินเที่ยวสะสม','p.bal.travel',p.bal.travel)+
-      fld('เงินเก็บกับแฟน (เงินสด)','p.bal.partner',p.bal.partner)+fld('หนี้คงเหลือ','p.bal.debt',p.bal.debt)+
+    lead('ยอดปัจจุบัน','ใส่เฉพาะ “ยอดตั้งต้น” ก่อนเริ่มใช้แอป — หลังจากนี้บันทึกรายการแบบเงินเก็บ ระบบจะบวกสะสมให้เอง')+
+    '<div class="fgrid">'+fld('เงินสด / เงินในบัญชี','p.bal.cash',p.bal.cash)+
+      fld('เงินฉุกเฉิน · ยอดตั้งต้น (รวมตอนนี้ '+m0(balEmg())+')','p.bal.emergency',p.bal.emergency)+
+      fld('เป้าหมายเงินฉุกเฉิน','p.bal.emergencyTarget',p.bal.emergencyTarget)+
+      fld('เงินเที่ยว · ยอดตั้งต้น (รวมตอนนี้ '+m0(balTrv())+')','p.bal.travel',p.bal.travel)+
+      fld('เงินเก็บกับแฟน · เงินสดตั้งต้น (รวมตอนนี้ '+m0(balPtn())+')','p.bal.partner',p.bal.partner)+fld('หนี้คงเหลือ','p.bal.debt',p.bal.debt)+
       '<div><label for="f_p_bal_wht">ภาษีหัก ณ ที่จ่าย (ยอดตั้งต้น)</label>'+
         '<input id="f_p_bal_wht" type="number" inputmode="decimal" step="0.01" data-path="p.bal.wht" value="'+(+p.bal.wht||0)+'">'+
         '<div class="hint" style="margin-top:5px">ยอดที่ถูกหักก่อนเริ่มใช้แอป · ครั้งต่อไปให้บันทึกผ่านหมวด “ภาษีหัก ณ ที่จ่าย” ในรายจ่าย รวมสะสมตอนนี้ '+m0(whtTotal())+'</div></div>'+
@@ -1344,10 +1387,15 @@ function hSheet(h){
         ' · กำไร/ขาดทุน <b class="num '+(pl>=0?'pos':'neg')+'">'+(pl>=0?'+':'')+money(pl,cu)+'</b>'):'กรอกจำนวนและราคาเพื่อดูมูลค่า';
     }
     Array.prototype.forEach.call(s.querySelectorAll('input,select'),function(i){i.addEventListener('input',prev)});prev();
+    s.querySelector('#sy').addEventListener('input',function(){
+      var nm=s.querySelector('#nm');
+      if(!nm.value.trim()||nm.dataset.auto==='1'){var g=symName(this.value);if(g){nm.value=g;nm.dataset.auto='1'}}
+    });
+    s.querySelector('#nm').addEventListener('input',function(){this.dataset.auto=''});
     s.querySelector('#ok').addEventListener('click',function(){
       var sy=s.querySelector('#sy').value.trim().toUpperCase();
       if(!sy){s.querySelector('#sy').focus();return}
-      var rec={id:h.id,symbol:sy,name:s.querySelector('#nm').value.trim(),qty:+s.querySelector('#qt').value||0,
+      var rec={id:h.id,symbol:sy,name:s.querySelector('#nm').value.trim()||symName(sy),qty:+s.querySelector('#qt').value||0,
         cost:+s.querySelector('#cs').value||0,price:+s.querySelector('#pr').value||0,cur:s.querySelector('#cu').value,updated:today()};
       var ix=S.holdings.findIndex(function(x){return x.id===h.id});
       if(ix>=0)S.holdings[ix]=rec;else S.holdings.push(rec);
@@ -1360,7 +1408,8 @@ function pricesSheet(){
   var body='<div class="hint">ใส่ราคาปิดล่าสุดของแต่ละตัว แล้วกดบันทึกครั้งเดียว</div>'+
     '<div><label for="fx">อัตราแลกเปลี่ยน 1 USD = ? บาท</label><input id="fx" type="number" step="0.01" value="'+rate()+'"></div>'+
     S.holdings.map(function(h){
-      return '<div><label for="p_'+h.id+'">'+esc(h.symbol)+' <span class="fnt">('+h.cur+')</span> · เดิม '+money(h.price,h.cur)+'</label>'+
+      return '<div><label for="p_'+h.id+'">'+esc(h.symbol)+' <span class="fnt">('+h.cur+')</span> · เดิม '+money(h.price,h.cur)+
+        (symName(h.symbol,h.name)?'<span class="fnt" style="display:block;font-weight:400">'+esc(symName(h.symbol,h.name))+'</span>':'')+'</label>'+
         '<input id="p_'+h.id+'" data-h="'+h.id+'" type="number" step="0.0001" inputmode="decimal" value="'+h.price+'"></div>';
     }).join('')+'<button class="btn pri" id="ok">บันทึกราคาวันนี้</button>';
   sheet('อัปเดตราคา · '+dLabel(today()),body,function(s,close){
@@ -1388,13 +1437,15 @@ function dcaSheet(d){
     (isNew?'':'<button class="btn dgr" id="del">ลบออกจากแผน</button>')+
     '<button class="btn pri" id="ok">บันทึก</button>',
     function(s2,close){
-      var ip=s2.querySelector('#dp');
+      var ip=s2.querySelector('#dp'),isy=s2.querySelector('#ds');
       function prev(){
         var v=+ip.value||0,others=dcaPctSum()-(isNew?0:(+d.pct||0));
-        s2.querySelector('#pv').innerHTML='คิดเป็นเงิน <b class="num">'+m0(dcaTotal()*v/100)+'</b> ต่อเดือน · รวมทั้งแผนจะเป็น '+
+        var nm=symName(isy.value);
+        s2.querySelector('#pv').innerHTML=(nm?'<b>'+esc(nm)+'</b><br>':'')+
+          'คิดเป็นเงิน <b class="num">'+m0(dcaTotal()*v/100)+'</b> ต่อเดือน · รวมทั้งแผนจะเป็น '+
           ((others+v).toFixed(1))+'%'+((others+v)>100?' (เกิน 100% ระบบจะปรับสัดส่วนให้เอง)':'');
       }
-      ip.addEventListener('input',prev);prev();
+      ip.addEventListener('input',prev);isy.addEventListener('input',prev);prev();
       var del=s2.querySelector('#del');
       if(del)del.addEventListener('click',function(){S.dca=S.dca.filter(function(x){return x.id!==d.id});normalizeDca();close();commit()});
       s2.querySelector('#ok').addEventListener('click',function(){
@@ -1507,7 +1558,7 @@ function csvTx(){
 }
 function csvPort(){
   var p=port(),rows=[['หุ้น','ชื่อ','สกุลเงิน','จำนวน','ต้นทุน/หุ้น','ราคาล่าสุด','มูลค่า','มูลค่า(บาท)','กำไรขาดทุน','เปอร์เซ็นต์','อัปเดตเมื่อ']];
-  p.rows.forEach(function(r){var h=r.h;rows.push([h.symbol,h.name||'',h.cur,h.qty,h.cost,h.price,n2(r.val),n2(r.valThb),n2(r.pl),r.plp.toFixed(2),h.updated||''])});
+  p.rows.forEach(function(r){var h=r.h;rows.push([h.symbol,symName(h.symbol,h.name),h.cur,h.qty,h.cost,h.price,n2(r.val),n2(r.valThb),n2(r.pl),r.plp.toFixed(2),h.updated||''])});
   return '﻿'+rows.map(function(r){return r.map(csvEsc).join(',')}).join('\n');
 }
 
@@ -1542,7 +1593,7 @@ document.addEventListener('click',function(e){
     else if(a==='addh')hSheet(null);
     else if(a==='edith')hSheet(S.holdings.find(function(x){return x.id===id}));
     else if(a==='delh'){var hh=S.holdings.find(function(x){return x.id===id});
-      confirmSheet('นำหุ้นออกจากพอร์ต','ลบ '+esc(hh.symbol)+' ('+qty(hh.qty)+' หุ้น) ออกจากพอร์ตหรือไม่ ใช้เมื่อขายหมดแล้ว',
+      confirmSheet('นำหุ้นออกจากพอร์ต','ลบ '+esc(symFull(hh.symbol,hh.name))+' ('+qty(hh.qty)+' หุ้น) ออกจากพอร์ตหรือไม่ ใช้เมื่อขายหมดแล้ว',
         function(){S.holdings=S.holdings.filter(function(x){return x.id!==id});commit()})}
     else if(a==='prices')pricesSheet();
     else if(a==='autoprice')autoSheet();
@@ -1551,7 +1602,7 @@ document.addEventListener('click',function(e){
     else if(a==='normdca'){normalizeDca();commit()}
     else if(a==='editdca')dcaSheet(S.dca.find(function(x){return x.id===id}));
     else if(a==='deldca'){var dd=S.dca.find(function(x){return x.id===id});
-      confirmSheet('ลบแผน DCA','ลบ '+esc(dd.sym)+' ออกจากแผน DCA รายเดือนหรือไม่ ระบบจะปรับสัดส่วนที่เหลือให้ครบ 100% ให้เอง',
+      confirmSheet('ลบแผน DCA','ลบ '+esc(symFull(dd.sym))+' ออกจากแผน DCA รายเดือนหรือไม่ ระบบจะปรับสัดส่วนที่เหลือให้ครบ 100% ให้เอง',
         function(){S.dca=S.dca.filter(function(x){return x.id!==id});normalizeDca();commit()})}
     else if(a==='addfix')fixSheet(null);
     else if(a==='editfix')fixSheet(S.profile.fixed.find(function(x){return x.id===id}));
