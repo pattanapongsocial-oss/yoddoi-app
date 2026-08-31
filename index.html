@@ -297,9 +297,9 @@ ol.steps b{color:var(--ink)}
 var FONTS='https://fonts.googleapis.com/css2?family=Anuphan:wght@400;500;600&family=Bai+Jamjuree:wght@600;700&family=IBM+Plex+Mono:wght@500;600&display=swap';
 var LSKEY='mymoney-v1';
 var TH_M=['ม.ค.','ก.พ.','มี.ค.','เม.ย.','พ.ค.','มิ.ย.','ก.ค.','ส.ค.','ก.ย.','ต.ค.','พ.ย.','ธ.ค.'];
-var SERIES=['#17786F','#2E6E93','#C9A75C','#6F9E86','#8390A6','#B4785E'];
-/* สีพาสเทลสำหรับหุ้น — ผ่านการตรวจว่าตาบอดสียังแยกออกและไม่กลืนพื้นครีม */
+/* สีพาสเทลชุดเดียวใช้ทั้งแอป — ผ่านการตรวจว่าตาบอดสียังแยกออกและไม่กลืนพื้นครีม */
 var PASTEL=['#5B93DE','#F0855B','#4CBF95','#F0B44A','#EF9DBC','#4FA24F','#7A6BC9','#E97473'];
+var SERIES=PASTEL;
 var PMUTE='#B9B4AB';
 function pc(i){return i<PASTEL.length?PASTEL[i]:PMUTE}
 /* รวมตัวที่ 9 ขึ้นไปเป็น “อื่นๆ” ก้อนเดียว เพื่อไม่ให้สีซ้ำกันจนแยกไม่ออก */
@@ -593,7 +593,8 @@ function closedMks(){
 }
 /* เหลือเท่าไหร่เมื่อจบรอบ ยกไปสมทบเงินฉุกเฉินของรอบถัดไปเรื่อย ๆ */
 function carryOver(){return sum(closedMks(),function(mk){return Math.max(0,leftoverOf(mk))})}
-function balEmg(){return balOf('emergency','s1')+carryOver()}
+function leftoverNow(){return Math.max(0,leftoverOf(mkOf(today())))}
+function balEmg(){return balOf('emergency','s1')+carryOver()+leftoverNow()}
 function balTrv(){return balOf('travel','s2')}
 function balPtn(){return 0}
 /* เงินเก็บกับแฟนใส่เดือนละเท่าไร: เรา + แฟน */
@@ -901,9 +902,9 @@ function vHome(){
       '<div class="pad" style="padding-top:10px">'+
       '<span class="num" style="font-size:28px">'+m0(balEmg())+'</span>'+
       '<div class="xs fnt" style="margin-top:4px">ตั้งต้น '+m0(b.emergency)+' + บันทึกไว้ '+m0(savedCat('s1'))+
-        ' + ยกมาจากรอบก่อน '+m0(carryOver())+'</div>'+
-      (leftoverOf(mkOf(today()))>0
-        ? '<div class="xs fnt" style="margin-top:3px">รอบนี้เหลืออยู่ <b>'+m0(leftoverOf(mkOf(today())))+'</b> จะถูกยกมาสมทบให้เองเมื่อขึ้นรอบใหม่</div>'
+        ' + ยกมาจากรอบก่อน '+m0(carryOver())+' + เหลือจากรอบนี้ '+m0(leftoverNow())+'</div>'+
+      (leftoverNow()>0
+        ? '<div class="xs fnt" style="margin-top:3px">ยอด <b>'+m0(leftoverNow())+'</b> ของรอบนี้ขยับตามเงินคงเหลือตลอดเวลา และจะถูกล็อกเป็นเงินฉุกเฉินเมื่อขึ้นรอบใหม่</div>'
         : '')+
       '<div class="bar" style="margin-top:10px"><div class="lin"><span class="sm mut">'+eg.toFixed(0)+'% ของเป้าหมาย</span><span class="v num sm">'+m0(b.emergencyTarget)+'</span></div>'+
       '<div class="track"><i style="width:'+eg.toFixed(1)+'%"></i></div></div>'+
