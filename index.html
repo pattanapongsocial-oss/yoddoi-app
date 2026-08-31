@@ -307,7 +307,7 @@ function seed(){
       salary:0,sso:0,pvdM:0,kyst:0,
       fixed:[{id:'f1',n:'ค่าหอ',v:0},{id:'f2',n:'ค่ามือถือ',v:0},{id:'f3',n:'ใช้หนี้',v:0},
              {id:'f4',n:'ผ่อนคอม',v:0},{id:'f5',n:'ค่ากิน (ฟิกซ์)',v:0},{id:'f6',n:'ค่าใช้จ่ายอื่นๆ',v:0}],
-      plan:{travel:0,partner:0,dca:0,emergency:0},
+      plan:{travel:0,partner:0,partnerHer:0,dca:0,emergency:0},
       pvd:{principal:0,ret:0,amc:'KBANK',code:'PF3103',nav:0,units:0,navDate:'',employer:0},
       bal:{cash:0,emergency:0,emergencyTarget:0,travel:0,partner:0,debt:0,wht:0}
     },
@@ -328,7 +328,7 @@ function blankify(o){
   var pf=o.profile;
   pf.salary=0;pf.sso=0;pf.pvdM=0;pf.kyst=0;
   pf.fixed.forEach(function(f){f.v=0});
-  pf.plan={travel:0,partner:0,dca:0,emergency:0};
+  pf.plan={travel:0,partner:0,partnerHer:0,dca:0,emergency:0};
   pf.pvd.principal=0;pf.pvd.ret=0;pf.pvd.nav=0;pf.pvd.units=0;
   pf.bal={cash:0,emergency:0,emergencyTarget:0,travel:0,partner:0,debt:0,wht:0};
   o.holdings=[];
@@ -380,6 +380,9 @@ function migrate(s){
   s.profile.pvd=s.profile.pvd||base.profile.pvd;
   s.profile.fixed=s.profile.fixed||base.profile.fixed;
   s.dca=s.dca||base.dca;s.tx=s.tx||[];s.goals=s.goals||[];s.holdings=s.holdings||[];s.names=s.names||{};
+  if(s.profile.plan.partnerHer===undefined)s.profile.plan.partnerHer=(+s.profile.plan.partner||0);
+  /* เงินเก็บกับแฟนอยู่ในหุ้น IVV ล้วน ไม่มีส่วนที่เป็นเงินสด */
+  if(!s.pv5){s.profile.bal.partner=0;s.pv5=1}
   return s;
 }
 
@@ -565,7 +568,9 @@ function savedCat(cid){return sum(S.tx.filter(function(t){return t.type==='savin
 function balOf(k,cid){return (+S.profile.bal[k]||0)+savedCat(cid)}
 function balEmg(){return balOf('emergency','s1')}
 function balTrv(){return balOf('travel','s2')}
-function balPtn(){return balOf('partner','s3')}
+function balPtn(){return 0}
+/* เงินเก็บกับแฟนใส่เดือนละเท่าไร: เรา + แฟน */
+function partnerMonthly(){return (+S.profile.plan.partner||0)+(+S.profile.plan.partnerHer||0)}
 function balEtc(){return savedCat('s4')}
 function partnerValue(){
   var v=balPtn();
@@ -871,9 +876,10 @@ function vHome(){
       '<div class="track"><i style="width:'+eg.toFixed(1)+'%"></i></div></div>'+
       '<div class="grid g2" style="margin-top:14px;gap:10px">'+
         miniGoal('เที่ยว',balTrv(),'ตั้งต้น '+m0(b.travel)+' + บันทึกไว้ '+m0(savedCat('s2')))+
-        miniGoal('เงินเก็บกับแฟน',partnerValue(),'เงินสด '+m0(balPtn())+' + IVV '+m0(partnerValue()-balPtn()))+
+        miniGoal('เงินเก็บกับแฟน',partnerValue(),'IVV · ใส่เดือนละ '+m0(partnerMonthly())+' (เรา '+m0(S.profile.plan.partner)+' + แฟน '+m0(S.profile.plan.partnerHer)+')')+
       '</div>'+
-      '<div class="hint" style="margin-top:11px">บันทึกรายการแบบ “เงินเก็บ” เลือกหมวดไหน ยอดจะไปสะสมในเป้าหมายนั้นให้เองทันที</div>'+
+      '<div class="hint" style="margin-top:11px">บันทึกรายการแบบ “เงินเก็บ” เลือกหมวดไหน ยอดจะไปสะสมในเป้าหมายนั้นให้เองทันที<br>'+
+      '<b>เงินเก็บกับแฟน</b>เป็นหุ้น IVV ล้วน ไม่มีส่วนที่เป็นเงินสด — ยอดคิดจากจำนวนหุ้น × ราคาล่าสุด ซื้อเพิ่มเดือนไหนแล้วแก้จำนวนหุ้นในหน้าพอร์ตลงทุนได้เลย</div>'+
       '</div></div>';
   h+='</div>';
 
@@ -1057,7 +1063,7 @@ function vYear(){
         miniBox('พอร์ตหุ้น',m0(w.port.val),'DCA '+m0(dcaTotal())+' / เดือน',SERIES[0])+
         miniBox('กองทุนสำรองฯ',m0(w.pvd),'เข้าเดือนละ '+m0(pvdMonthly()),SERIES[2])+
         miniBox('ภาษีหัก ณ ที่จ่าย',m0(whtTotal()),'ขอคืนได้ตอนยื่นภาษี',SERIES[4])+
-        miniBox('เงินเก็บกับแฟน',m0(partnerValue()),'ลงทุนใน IVV',SERIES[3])+
+        miniBox('เงินเก็บกับแฟน',m0(partnerValue()),'IVV · เดือนละ '+m0(partnerMonthly()),SERIES[3])+
       '</div></div></div>'+
   '</div>';
   return h;
@@ -1243,9 +1249,11 @@ function vSet(){
 
   h+='<div class="card"><div class="setsec">'+
     lead('เป้าหมายรายเดือน','เป้าที่ตั้งใจเก็บ ไม่ได้หักอัตโนมัติ — บันทึกเองเมื่อโอนจริง · รวม '+m0(pl.save))+
-    '<div><div class="fgrid">'+fld('เก็บไปเที่ยว','p.plan.travel',p.plan.travel)+fld('เงินเก็บกับแฟน (ไม่บังคับขั้นต่ำ)','p.plan.partner',p.plan.partner)+
+    '<div><div class="fgrid">'+fld('เก็บไปเที่ยว','p.plan.travel',p.plan.travel)+fld('เงินเก็บกับแฟน · ส่วนของเรา','p.plan.partner',p.plan.partner)+
+      fld('เงินเก็บกับแฟน · ส่วนของแฟน','p.plan.partnerHer',p.plan.partnerHer)+
       fld('DCA ต่อเดือน','p.plan.dca',p.plan.dca)+fld('เก็บฉุกเฉิน','p.plan.emergency',p.plan.emergency)+'</div>'+
-      '<div class="hint" style="margin-top:7px">ยอด DCA นี้จะถูกแบ่งตามสัดส่วน % ที่ตั้งไว้ในหน้าพอร์ตลงทุนโดยอัตโนมัติ</div></div></div></div>';
+      '<div class="hint" style="margin-top:7px">ยอด DCA นี้จะถูกแบ่งตามสัดส่วน % ที่ตั้งไว้ในหน้าพอร์ตลงทุนโดยอัตโนมัติ</div>'+
+      '<div class="hint" style="margin-top:7px">เงินเก็บกับแฟนรวมเดือนละ <b>'+m0(partnerMonthly())+'</b> เอาไปซื้อ <b>IVV</b> อย่างเดียว (ส่วนของแฟนเป็นเงินนอกเงินเดือนเรา จึงไม่ถูกนับเป็นรายจ่ายของเรา) · เงินต้นคิดจากจำนวนหุ้น IVV ที่กรอกไว้ในพอร์ต</div></div></div></div>';
 
   h+='<div class="card"><div class="setsec">'+
     lead('กองทุนสำรองเลี้ยงชีพ',p.pvd.amc+' รหัสกองทุน '+p.pvd.code+' — เงินต้นและผลประโยชน์รวมอยู่ในมูลค่าพอร์ต')+
@@ -1270,7 +1278,7 @@ function vSet(){
       fld('เงินฉุกเฉิน · ยอดตั้งต้น (รวมตอนนี้ '+m0(balEmg())+')','p.bal.emergency',p.bal.emergency)+
       fld('เป้าหมายเงินฉุกเฉิน','p.bal.emergencyTarget',p.bal.emergencyTarget)+
       fld('เงินเที่ยว · ยอดตั้งต้น (รวมตอนนี้ '+m0(balTrv())+')','p.bal.travel',p.bal.travel)+
-      fld('เงินเก็บกับแฟน · เงินสดตั้งต้น (รวมตอนนี้ '+m0(balPtn())+')','p.bal.partner',p.bal.partner)+fld('หนี้คงเหลือ','p.bal.debt',p.bal.debt)+
+      fld('หนี้คงเหลือ','p.bal.debt',p.bal.debt)+
       '<div><label for="f_p_bal_wht">ภาษีหัก ณ ที่จ่าย (ยอดตั้งต้น)</label>'+
         '<input id="f_p_bal_wht" type="number" inputmode="decimal" step="0.01" data-path="p.bal.wht" value="'+(+p.bal.wht||0)+'">'+
         '<div class="hint" style="margin-top:5px">ยอดที่ถูกหักก่อนเริ่มใช้แอป · ครั้งต่อไปให้บันทึกผ่านหมวด “ภาษีหัก ณ ที่จ่าย” ในรายจ่าย รวมสะสมตอนนี้ '+m0(whtTotal())+'</div></div>'+
