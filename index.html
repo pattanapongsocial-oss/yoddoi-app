@@ -683,7 +683,8 @@ function autoSheet(){
 var SKEY='mymoney-sync';
 var sync={url:'',at:0,state:'off',msg:''};
 try{var _sc=JSON.parse(localStorage.getItem(SKEY)||'null');if(_sc&&_sc.url){sync.url=_sc.url;sync.at=_sc.at||0;sync.state='idle';}}catch(e){}
-function syncOn(){return !!sync.url}
+function syncOn(){return !!sync.url&&HOSTED}
+function syncBlocked(){return !!sync.url&&!HOSTED}
 function saveSyncCfg(){try{localStorage.setItem(SKEY,JSON.stringify({url:sync.url,at:sync.at}))}catch(e){}}
 function syncURL(extra){return sync.url+(sync.url.indexOf('?')<0?'?':'&')+extra}
 function syncPull(cb){
@@ -724,6 +725,7 @@ function busyUI(){
 }
 function autoPull(){ if(syncOn()&&!document.hidden&&!busyUI()&&sync.state!=='busy')syncPull(); }
 function syncLabel(){
+  if(syncBlocked())return ['','บันทึกในบัญชี Claude','ซิงก์ Drive ใช้ได้เฉพาะเว็บของเรา'];
   if(!syncOn())return null;
   if(sync.state==='busy')return ['busy','กำลังซิงก์','กับ Google Drive'];
   if(sync.state==='err')return ['err','ซิงก์ไม่สำเร็จ',sync.msg||'ลองใหม่ในหน้าตั้งค่า'];
@@ -1202,7 +1204,7 @@ function vSet(){
     '<button class="btn ghost" data-a="backup">สำรองข้อมูล</button></div></div></div>';
 
   h+='<div class="card"><div class="setsec">'+
-    lead('ซิงก์ข้ามเครื่อง (Google Drive)', syncOn()?'เปิดอยู่ · ข้อมูลถูกเก็บไว้ใน Drive ของคุณเอง':'วางลิงก์ซิงก์ที่ได้จาก Google Apps Script เพื่อให้มือถือกับคอมเห็นข้อมูลตรงกัน')+
+    lead('ซิงก์ข้ามเครื่อง (Google Drive)', syncBlocked()?'หน้านี้อยู่บน claude.ai จึงต่อ Google Drive ไม่ได้':(syncOn()?'เปิดอยู่ · ข้อมูลถูกเก็บไว้ใน Drive ของคุณเอง':'วางลิงก์ซิงก์ที่ได้จาก Google Apps Script เพื่อให้มือถือกับคอมเห็นข้อมูลตรงกัน'))+
     '<div><label for="syncurl">ลิงก์ซิงก์</label>'+
     '<input id="syncurl" type="url" placeholder="https://script.google.com/macros/s/.../exec?token=..." value="'+esc(sync.url)+'">'+
     '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px">'+
@@ -1212,7 +1214,11 @@ function vSet(){
                 '<button class="btn dgr" data-a="syncoff">ปิดการซิงก์</button>':'')+
     '</div>'+
     '<div class="hint" style="margin-top:8px">'+
-      (syncOn()
+      (syncBlocked()
+        ? '<b>ซิงก์ Google Drive ทำงานบนหน้านี้ไม่ได้</b> — claude.ai กันไม่ให้หน้าเว็บที่เผยแพร่ติดต่อเว็บภายนอกทุกกรณี (เหตุผลเดียวกับที่ดึงราคาหุ้นไม่ได้) ข้อความ “Failed to fetch” คือการถูกกันนั้น ไม่ใช่ลิงก์เสีย<br>'+
+          'หน้านี้ยัง<b>บันทึกข้อมูลให้อัตโนมัติในบัญชี Claude</b> ของคุณอยู่ เปิดลิงก์เดิมจากเครื่องไหนก็เห็นข้อมูลเดียวกัน<br>'+
+          'ถ้าอยากใช้ซิงก์ผ่าน Drive (และให้ราคาหุ้นอัปเดตเอง) ให้เปิดเว็บของเราแทน แล้ววางลิงก์ซิงก์อันเดียวกันทั้งคอมและมือถือ'
+        : syncOn()
         ? 'สถานะ: '+esc(sync.state==='err'?('ผิดพลาด — '+sync.msg):(sync.state==='busy'?'กำลังซิงก์…':'พร้อมใช้งาน'))+
           (sync.at?' · ล่าสุด '+esc(new Date(sync.at).toLocaleString('th-TH')):'')+
           '<br>ทำงานอัตโนมัติทั้งหมด — แก้อะไรก็ส่งขึ้น Drive ให้เองใน 1 วินาที และดึงข้อมูลใหม่ทุกครั้งที่กลับเข้าแอป ทุก 1 นาทีระหว่างเปิดอยู่ และเมื่อเน็ตกลับมา · ปุ่มด้านบนมีไว้สั่งเองเวลาต้องการเท่านั้น'
