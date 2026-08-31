@@ -594,7 +594,7 @@ function closedMks(){
 /* เหลือเท่าไหร่เมื่อจบรอบ ยกไปสมทบเงินฉุกเฉินของรอบถัดไปเรื่อย ๆ */
 function carryOver(){return sum(closedMks(),function(mk){return Math.max(0,leftoverOf(mk))})}
 function leftoverNow(){return Math.max(0,leftoverOf(mkOf(today())))}
-function balEmg(){return balOf('emergency','s1')+carryOver()+leftoverNow()}
+function balEmg(){return (+S.profile.bal.cash||0)+balOf('emergency','s1')+carryOver()+leftoverNow()}
 function balTrv(){return balOf('travel','s2')}
 function balPtn(){return 0}
 /* เงินเก็บกับแฟนใส่เดือนละเท่าไร: เรา + แฟน */
@@ -607,7 +607,7 @@ function partnerValue(){
 }
 function wealth(){
   var b=S.profile.bal,p=port(),pv=pvdValue();
-  var assets=(+b.cash||0)+balEmg()+balTrv()+balPtn()+balEtc()+p.val+pv;
+  var assets=balEmg()+balTrv()+balPtn()+balEtc()+p.val+pv;
   return {assets:assets,debt:(+b.debt||0),net:assets-(+b.debt||0),port:p,pvd:pv};
 }
 function priceStale(){if(!S.holdings.length)return 999;var d=0;S.holdings.forEach(function(h){d=Math.max(d,daysAgo(h.updated))});return d}
@@ -787,7 +787,7 @@ function donut(items,center,sub,size){
     items.forEach(function(it,i){
       var frac=(+it.v||0)/tot;if(frac<=0)return;
       var len=Math.max(0,frac*C-2.5);
-      segs+='<circle cx="'+R+'" cy="'+R+'" r="'+r+'" fill="none" stroke="'+(it.c||SERIES[i%SERIES.length])+'" stroke-width="15" stroke-linecap="round"'+
+      segs+='<circle cx="'+R+'" cy="'+R+'" r="'+r+'" fill="none" stroke="'+(it.c||pc(i))+'" stroke-width="15" stroke-linecap="round"'+
         ' stroke-dasharray="'+len.toFixed(2)+' '+(C-len).toFixed(2)+'" stroke-dashoffset="'+(-off).toFixed(2)+'" transform="rotate(-90 '+R+' '+R+')"/>';
       off+=frac*C;
     });
@@ -806,7 +806,7 @@ function legend(items,fmt){
   var tot=sum(items,function(i){return i.v});
   return '<div class="dlegend">'+items.map(function(it,i){
     var pc=tot>0?(+it.v||0)/tot*100:0;
-    return '<div class="l"><span class="sw" style="background:'+(it.c||SERIES[i%SERIES.length])+'"></span>'+
+    return '<div class="l"><span class="sw" style="background:'+(it.c||pc(i))+'"></span>'+
       '<span class="nm">'+nmHtml(it.n)+'</span><span class="pc num">'+pc.toFixed(pc<10?1:0)+'%</span>'+
       '<span class="vv num">'+(fmt?fmt(it):m0(it.v))+'</span></div>';
   }).join('')+'</div>';
@@ -874,7 +874,7 @@ function vHome(){
       '<span class="num '+(w.net>=0?'pos':'neg')+'" style="font-size:30px">'+m0(w.net)+'</span>'+
       '<div class="sm mut" style="margin-top:6px">ทรัพย์สิน '+m0(w.assets)+' · หนี้คงเหลือ '+m0(w.debt)+'</div>'+
       '<div class="nwbar"><i style="width:'+(w.assets+w.debt>0?Math.max(2,Math.min(100,w.assets/(w.assets+w.debt)*100)):0).toFixed(1)+'%"></i></div>'+
-      '<div class="xs fnt" style="margin-top:7px">รวมพอร์ต '+m0(w.port.val)+' · กองทุนสำรองฯ '+m0(w.pvd)+' · เงินสด '+m0(b.cash)+'</div>'+
+      '<div class="xs fnt" style="margin-top:7px">รวมพอร์ต '+m0(w.port.val)+' · กองทุนสำรองฯ '+m0(w.pvd)+' · เงินฉุกเฉิน '+m0(balEmg())+'</div>'+
       '<div style="margin-top:12px;padding-top:12px;border-top:1px solid var(--line);display:flex;align-items:center;gap:9px;flex-wrap:wrap">'+
         '<div><div class="xs fnt">ภาษีหัก ณ ที่จ่าย (สะสม)</div><span class="num" style="font-size:18px">'+m0(whtTotal())+'</span></div>'+
         '<button class="btn sm ghost" data-a="addtx" style="margin-left:auto">＋ บันทึกรายการ</button></div>'+
@@ -901,10 +901,12 @@ function vHome(){
   h+='<div class="card"><div class="hd"><div><div class="eyebrow">เป้าหมายสำคัญ</div><h3>เงินสำรองฉุกเฉิน</h3></div></div>'+
       '<div class="pad" style="padding-top:10px">'+
       '<span class="num" style="font-size:28px">'+m0(balEmg())+'</span>'+
-      '<div class="xs fnt" style="margin-top:4px">ตั้งต้น '+m0(b.emergency)+' + บันทึกไว้ '+m0(savedCat('s1'))+
+      '<div class="xs fnt" style="margin-top:4px">เงินสดในบัญชี '+m0(b.cash)+
+        ((+b.emergency||0)>0?' + ตั้งต้น '+m0(b.emergency):'')+
+        ' + บันทึกไว้ '+m0(savedCat('s1'))+
         ' + ยกมาจากรอบก่อน '+m0(carryOver())+' + เหลือจากรอบนี้ '+m0(leftoverNow())+'</div>'+
       (leftoverNow()>0
-        ? '<div class="xs fnt" style="margin-top:3px">ยอด <b>'+m0(leftoverNow())+'</b> ของรอบนี้ขยับตามเงินคงเหลือตลอดเวลา และจะถูกล็อกเป็นเงินฉุกเฉินเมื่อขึ้นรอบใหม่</div>'
+        ? '<div class="xs fnt" style="margin-top:3px">ยอด <b>'+m0(leftoverNow())+'</b> ของรอบนี้ขยับตามเงินคงเหลือแบบเรียลไทม์ และจะถูกล็อกเป็นเงินฉุกเฉินเมื่อขึ้นรอบใหม่</div>'
         : '')+
       '<div class="bar" style="margin-top:10px"><div class="lin"><span class="sm mut">'+eg.toFixed(0)+'% ของเป้าหมาย</span><span class="v num sm">'+m0(b.emergencyTarget)+'</span></div>'+
       '<div class="track"><i style="width:'+eg.toFixed(1)+'%"></i></div></div>'+
@@ -1093,8 +1095,8 @@ function vYear(){
   var w=wealth();
   h+='<div class="grid g2">'+
     '<div class="card"><div class="hd"><div><div class="eyebrow">ใช้ไปกับอะไรมากที่สุด</div><h3>รายจ่ายตามหมวดทั้งปี</h3></div></div>'+
-      (cats.length?'<div class="pad donut">'+donut(cats.map(function(c,i){return {n:c.n,v:c.v,c:SERIES[i%SERIES.length]}}),m0(s.expense),'ทั้งปี')+
-        legend(cats.map(function(c,i){return {n:c.n,v:c.v,c:SERIES[i%SERIES.length]}}))+'</div>'
+      (cats.length?'<div class="pad donut">'+donut(foldSeries(cats.map(function(c,i){return {n:c.n,v:c.v,c:pc(i)}})),m0(s.expense),'ทั้งปี')+
+        legend(foldSeries(cats.map(function(c,i){return {n:c.n,v:c.v,c:pc(i)}})))+'</div>'
         :'<div class="empty">ยังไม่มีรายจ่ายในปีนี้</div>')+'</div>'+
     '<div class="card"><div class="hd"><div><div class="eyebrow">ณ วันนี้</div><h3>ความมั่งคั่งสะสม</h3></div></div>'+
       '<div class="pad" style="padding-top:10px">'+
@@ -1327,7 +1329,7 @@ function vSet(){
 
   h+='<div class="card"><div class="setsec">'+
     lead('ยอดปัจจุบัน','ใส่เฉพาะ “ยอดตั้งต้น” ก่อนเริ่มใช้แอป — หลังจากนี้บันทึกรายการแบบเงินเก็บ ระบบจะบวกสะสมให้เอง')+
-    '<div class="fgrid">'+fld('เงินสด / เงินในบัญชี','p.bal.cash',p.bal.cash)+
+    '<div class="fgrid">'+fld('เงินสด / เงินในบัญชี (นับรวมเป็นเงินฉุกเฉิน)','p.bal.cash',p.bal.cash)+
       fld('เงินฉุกเฉิน · ยอดตั้งต้น (รวมตอนนี้ '+m0(balEmg())+')','p.bal.emergency',p.bal.emergency)+
       fld('เป้าหมายเงินฉุกเฉิน','p.bal.emergencyTarget',p.bal.emergencyTarget)+
       fld('เงินเที่ยว · ยอดตั้งต้น (รวมตอนนี้ '+m0(balTrv())+')','p.bal.travel',p.bal.travel)+
