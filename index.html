@@ -18,7 +18,7 @@
 <body>
 <style id="css">
 :root{
-  --bg:#EDF2F1; --card:#FFFFFF; --card2:#F4F7F6; --line:#E3EBE9;
+  --bg:#DEE8E6; --card:#F6FAF9; --card2:#E8F0EE; --line:#DFEAE7;
   --ink:#0E2A2E; --muted:#5D7478; --faint:#8CA2A6;
   --deep:#0C333B; --deep2:#08222A; --onDeep:#EAF4F2; --onDeepFaint:#9FBCBD;
   --sand:#E9DCBE; --sandInk:#3A3220;
@@ -168,6 +168,19 @@ main{max-width:1120px;margin:0 auto;padding:20px 16px 108px;display:flex;flex-di
 /* donut */
 .donut{display:flex;gap:18px;align-items:center;flex-wrap:wrap}
 .donut svg{flex:none}
+/* แถวสัดส่วน: ชื่อ + รางสี + ตัวเลข */
+.rw{display:grid;grid-template-columns:84px 1fr 64px;align-items:center;gap:10px;padding:5px 0;font-size:12.5px}
+.rw .nm{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--ink)}
+.rw .vv{text-align:right;font-weight:500;font-family:'IBM Plex Mono',monospace;font-variant-numeric:tabular-nums}
+.trk{height:9px;border-radius:99px;background:var(--card2);overflow:hidden}
+.trk i{display:block;height:100%;border-radius:99px}
+.chip2{display:inline-flex;align-items:center;gap:5px;font-size:11.5px;font-weight:600;padding:4px 9px;border-radius:99px;line-height:1;white-space:nowrap}
+.qb{border-radius:11px;padding:9px 9px 8px}
+.qb .k{font-size:10px}
+.qb .v{font-size:13.5px;font-weight:600;margin-top:2px;font-family:'IBM Plex Mono',monospace;font-variant-numeric:tabular-nums}
+.wrap2{display:flex;align-items:center;gap:15px}
+.wrap2 .side{flex:1;min-width:0}
+@media(max-width:400px){.rw{grid-template-columns:74px 1fr 58px;gap:8px}}
 .dlegend{flex:1;min-width:170px;display:flex;flex-direction:column}
 .dlegend .l{display:flex;align-items:center;gap:8px;padding:8px 0;border-top:1px solid var(--line);font-size:13.5px}
 .dlegend .l:first-child{border-top:none}
@@ -883,95 +896,184 @@ function head(t){
     '<button class="btn pri" data-a="addtx">＋ เพิ่มรายการ</button></div></div>';
 }
 
+
+/* ---------- ข้อมูลสำหรับหน้าภาพรวม ---------- */
+function last7Spend(){
+  var out=[],d=new Date(today()+'T00:00:00');
+  for(var i=6;i>=0;i--){var x=new Date(d);x.setDate(d.getDate()-i);out.push({d:ds(x),v:spentOn(ds(x))})}
+  return out;
+}
+function recentMks(n){
+  var out=[],mk=mkOf(today());
+  for(var i=0;i<n;i++){if(mk<startMk())break;out.unshift(mk);mk=addM(mk,-1)}
+  return out;
+}
+/* เงินที่เก็บได้สะสม (เก็บ + ลงทุน + ที่เหลือแต่ละรอบ) — คิดจากรายการจริงล้วน */
+function keptSeries(){
+  var mks=recentMks(6),run=0;
+  return mks.map(function(mk){
+    var x=sums(mk);
+    run+=x.saving+x.invest+Math.max(0,leftoverOf(mk));
+    return {mk:mk,v:run};
+  });
+}
+function sparkPath(vals,w,h){
+  if(vals.length<2)return null;
+  var mx=Math.max.apply(null,vals),mn=Math.min.apply(null,vals);
+  var rg=(mx-mn)||1,st=w/(vals.length-1);
+  var pts=vals.map(function(v,i){return [i*st,h-((v-mn)/rg)*(h-6)-3]});
+  return {line:pts.map(function(p,i){return (i?'L':'M')+p[0].toFixed(1)+' '+p[1].toFixed(1)}).join(' '),
+          area:pts.map(function(p,i){return (i?'L':'M')+p[0].toFixed(1)+' '+p[1].toFixed(1)}).join(' ')+' L'+w+' '+h+' L0 '+h+' Z',
+          last:pts[pts.length-1]};
+}
+function rowsHtml(items,total,cols){
+  var mx=Math.max.apply(null,items.map(function(i){return Math.abs(i.v)}).concat([1]));
+  return items.map(function(it){
+    return '<div class="rw"'+(cols?' style="grid-template-columns:'+cols+'"':'')+'>'+
+      '<span class="nm"'+(it.mut?' style="color:var(--faint)"':'')+'>'+esc(it.n)+'</span>'+
+      '<span class="trk"><i style="width:'+Math.max(3,Math.abs(it.v)/mx*100).toFixed(1)+'%;background:'+it.c+'"></i></span>'+
+      '<span class="vv"'+(it.mut?' style="color:var(--muted)"':'')+'>'+Math.round(it.v).toLocaleString('en-US')+'</span></div>';
+  }).join('');
+}
+function donutCard(title,right,seg,center,sub,size,cols){
+  return '<div class="card"><div class="pad" style="padding-bottom:15px">'+
+    '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap"><div class="eyebrow" style="margin:0">'+esc(title)+'</div>'+
+      '<div style="margin-left:auto">'+right+'</div></div>'+
+    (seg.length
+      ? '<div class="wrap2" style="margin-top:13px">'+donut(seg,center,sub,size||124)+
+        '<div class="side">'+rowsHtml(seg,0,cols)+'</div></div>'
+      : '<div class="empty" style="padding:20px 8px">ยังไม่มีข้อมูลในรอบนี้</div>')+
+    '</div></div>';
+}
+
 /* ---- home ---- */
 function vHome(){
-  var pl=plan(),w=wealth(),s=sums(V.mk),b=S.profile.bal,h='';
+  var pl=plan(),w=wealth(),s=sums(V.mk),b=S.profile.bal,p=w.port,h='';
   h+='<div class="notes">'+notices()+'</div>';
-  h+='<div class="grid g23">';
-  h+='<div class="hero">'+
-      '<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap"><span class="tag">รอบ '+esc(mShort(V.mk))+'</span>'+
-        '<span class="xs" style="margin-left:auto;color:rgba(233,244,241,.82)">'+(pl.gross>0?'เงินเดือนสุทธิ '+m0(pl.net):'ยังไม่ได้ใส่เงินเดือน')+'</span></div>'+
-      '<div class="cap" style="margin:6px 0 0">'+esc(periodLabel(V.mk))+'</div>'+
-      (pl.gross>0
-        ? '<div style="margin-top:12px"><div class="cap" style="margin:0">เงินคงเหลือของรอบนี้</div>'+
-          '<span class="big num '+(pl.free<0?'neg':'')+'">'+m0(pl.free)+'</span>'+
-          '<div class="cap" style="margin-top:4px">'+(pl.auto
-            ? m0(pl.gross)+' − หัก '+m0(pl.dedAll)+' − ใช้ไป '+m0(pl.spentOther)+' − เก็บ/ลงทุน '+m0(pl.put)
-            : 'จากเงินเดือนที่ตั้งไว้ '+m0(pl.gross)+' − หัก '+m0(pl.ded))+'</div></div>'
-        : '<div style="margin-top:12px"><div class="cap" style="margin:0">ยังไม่ได้ใส่เงินเดือนของรอบนี้</div>'+
-          '<span class="big num">—</span>'+
-          '<div class="cap" style="margin-top:4px">บันทึกรายรับหมวดเงินเดือน แล้วระบบจะหักให้เอง</div></div>')+
-      '<div class="foot"><div><div class="k">ใช้ไปแล้ว</div><div class="v num">'+m0(pl.spentOther)+'</div></div>'+
-        '<div><div class="k">เก็บและลงทุน</div><div class="v num">'+m0(pl.put)+'</div></div>'+
-        '<button class="btn deep" data-a="addtx" style="background:rgba(255,255,255,.16)">＋ บันทึกรายการ</button></div>'+
+
+  /* ── 1. มูลค่าสุทธิ — บนภาพทะเลหมอก ─────────────────── */
+  var ks=keptSeries(),sp=sparkPath(ks.map(function(x){return x.v}),330,42);
+  var chase=(w.assets+w.debt)>0?Math.min(100,w.assets/(w.assets+w.debt)*100):0;
+  h+='<div class="hero"><div style="display:flex;align-items:center;gap:9px">'+
+      '<span class="tag">รอบ '+esc(mShort(V.mk))+'</span>'+
+      '<span class="xs" style="margin-left:auto;color:rgba(233,244,241,.82)">'+esc(periodLabel(V.mk))+'</span></div>'+
+    '<div style="margin-top:14px"><div class="cap" style="margin:0">มูลค่าสุทธิ</div>'+
+      '<div style="display:flex;align-items:flex-end;gap:10px;flex-wrap:wrap">'+
+        '<span class="big num '+(w.net<0?'neg':'')+'">'+m0(w.net)+'</span>'+
+        (p.cost>0?'<span class="chip2" style="background:rgba(127,211,174,.20);color:'+(p.pl>=0?'#9FE3C2':'#F3B7AE')+';margin-bottom:7px">'+
+          (p.pl>=0?'▲ ':'▼ ')+m0(Math.abs(p.pl))+' จากต้นทุน</span>':'')+
+      '</div></div>'+
+    (sp?'<svg width="330" height="42" viewBox="0 0 330 42" style="display:block;margin-top:10px;max-width:100%">'+
+      '<defs><linearGradient id="nwF" x1="0" y1="0" x2="0" y2="1">'+
+      '<stop offset="0%" stop-color="#7FD3AE" stop-opacity=".38"/><stop offset="100%" stop-color="#7FD3AE" stop-opacity="0"/></linearGradient></defs>'+
+      '<path d="'+sp.area+'" fill="url(#nwF)"/>'+
+      '<path d="'+sp.line+'" fill="none" stroke="#7FD3AE" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>'+
+      '<circle cx="'+sp.last[0].toFixed(1)+'" cy="'+sp.last[1].toFixed(1)+'" r="4" fill="#0C333B" stroke="#7FD3AE" stroke-width="2.2"/></svg>'+
+      '<div class="xs" style="color:rgba(233,244,241,.7);margin-top:3px">เงินที่เก็บได้สะสม '+esc(mShort(ks[0].mk))+' → '+esc(mShort(ks[ks.length-1].mk))+'</div>':'')+
+    '<div class="foot"><div><div class="k">ทรัพย์สิน</div><div class="v num">'+m0(w.assets)+'</div></div>'+
+      '<div><div class="k">หนี้คงเหลือ</div><div class="v num">'+m0(w.debt)+'</div></div>'+
+      '<div><div class="k">ไล่ทันแล้ว</div><div class="v num">'+chase.toFixed(1)+'%</div></div></div>'+
     '</div>';
-  h+='<div class="card nw"><div class="hd"><div><div class="eyebrow">สถานะการเงินปัจจุบัน</div><h3>มูลค่าสุทธิ</h3></div>'+
-      '<div class="act"><span class="pill">'+(w.net>=0?'บวก':'ติดลบ')+'</span></div></div>'+
-      '<div class="pad" style="padding-top:10px">'+
-      '<span class="num '+(w.net>=0?'pos':'neg')+'" style="font-size:30px">'+m0(w.net)+'</span>'+
-      '<div class="sm mut" style="margin-top:6px">ทรัพย์สิน '+m0(w.assets)+' · หนี้คงเหลือ '+m0(w.debt)+'</div>'+
-      '<div class="nwbar"><i style="width:'+(w.assets+w.debt>0?Math.max(2,Math.min(100,w.assets/(w.assets+w.debt)*100)):0).toFixed(1)+'%"></i></div>'+
-      '<div class="xs fnt" style="margin-top:7px">รวมพอร์ต '+m0(w.port.val)+' · กองทุนสำรองฯ '+m0(w.pvd)+' · เงินฉุกเฉิน '+m0(balEmg())+'</div>'+
-      '<div style="margin-top:12px;padding-top:12px;border-top:1px solid var(--line);display:flex;align-items:center;gap:9px;flex-wrap:wrap">'+
-        '<div><div class="xs fnt">ภาษีหัก ณ ที่จ่าย (สะสม)</div><span class="num" style="font-size:18px">'+m0(whtTotal())+'</span></div>'+
-        '<button class="btn sm ghost" data-a="addtx" style="margin-left:auto">＋ บันทึกรายการ</button></div>'+
 
-      '</div></div>';
-  h+='</div>';
+  /* ── 2. เหลือใช้รอบนี้ ─────────────────────────────── */
+  var d=dailyBudget(V.mk),used=started()?spentOn(today()):0,dpc=d.v>0?Math.min(999,used/d.v*100):0;
+  var seg=[pl.dedAll,pl.spentOther,pl.put,Math.max(0,pl.free)],tot=seg.reduce(function(x,y){return x+y},0)||1;
+  var segC=['#B7C4C4','#E97473','#7A6BC9','#4CBF95'],segN=['หัก','ใช้','ลงทุน','เหลือ'];
+  var qbg=['var(--card2)','rgba(233,116,115,.13)','rgba(122,107,201,.13)','rgba(76,191,149,.15)'];
+  var qink=['var(--muted)','#C8564C','#6455B8','#12805C'];
+  var l7=last7Spend(),mx7=Math.max.apply(null,l7.map(function(x){return x.v}).concat([1]));
 
-  h+='<div class="grid g3">'+
-    statCard('↓','รายรับที่บันทึก',m0(s.income),'pos',mShort(V.mk))+
-    statCard('↑','รายจ่ายที่บันทึก',m0(s.expense),'neg','ไม่รวมเงินเก็บและลงทุน')+
-    statCard('◎','เก็บและลงทุนจริง',m0(s.saving+s.invest),'','เป้าหมาย '+m0(pl.save))+
-  '</div>';
-  h+=dailyCard();
+  h+='<div class="card"><div class="pad" style="padding-bottom:15px">'+
+    '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">'+
+      '<div class="eyebrow" style="margin:0">เหลือใช้รอบนี้</div>'+
+      '<span class="chip2" style="margin-left:auto;background:var(--card2);color:var(--muted)">'+
+        (started()?'อีก '+Math.max(0,Math.round((new Date(periodOf(V.mk).to)-new Date(today()))/86400000))+' วัน':'ยังไม่เริ่มนับ')+'</span></div>'+
+    '<div style="display:flex;align-items:flex-end;gap:11px;margin-top:7px;flex-wrap:wrap">'+
+      '<span class="num" style="font-size:33px;font-weight:600;line-height:1;color:'+(pl.free<0?'var(--neg)':'var(--accent)')+'">'+m0(pl.free)+'</span>'+
+      '<span style="padding-bottom:4px"><span class="xs fnt" style="display:block">ใช้ได้วันละ</span>'+
+        '<b class="num" style="font-size:14px">'+m0(d.v)+'</b></span></div>'+
+    '<div style="display:flex;height:15px;border-radius:99px;overflow:hidden;margin-top:15px;gap:3px">'+
+      seg.map(function(v,i){return '<div style="width:'+(v/tot*100).toFixed(1)+'%;background:'+segC[i]+'"></div>'}).join('')+'</div>'+
+    '<div class="grid" style="grid-template-columns:repeat(4,1fr);gap:8px;margin-top:13px">'+
+      seg.map(function(v,i){return '<div class="qb" style="background:'+qbg[i]+'"><div class="k" style="color:'+qink[i]+'">'+segN[i]+'</div>'+
+        '<div class="v" style="color:'+qink[i]+'">'+Math.round(v).toLocaleString('en-US')+'</div></div>'}).join('')+'</div>'+
+    '<div style="margin-top:14px;padding-top:13px;border-top:1px solid var(--line);display:flex;align-items:center;gap:12px;flex-wrap:wrap">'+
+      '<svg width="42" height="42" viewBox="0 0 42 42" style="flex:none">'+
+        '<circle cx="21" cy="21" r="17" fill="none" stroke="var(--card2)" stroke-width="6"/>'+
+        '<circle cx="21" cy="21" r="17" fill="none" stroke="'+(dpc>100?'var(--neg)':'#4CBF95')+'" stroke-width="6" stroke-linecap="round" stroke-dasharray="'+(Math.min(100,dpc)/100*106.8).toFixed(1)+' 106.8" transform="rotate(-90 21 21)"/>'+
+        '<text x="21" y="25" text-anchor="middle" font-family="IBM Plex Mono,monospace" font-size="10" font-weight="600" fill="var(--ink)">'+Math.round(dpc)+'%</text></svg>'+
+      '<div><div class="sm">วันนี้ใช้ไป <b class="num">'+m0(used)+'</b></div>'+
+        '<div class="xs '+(dpc>100?'neg':'pos')+'" style="font-weight:500;margin-top:1px">'+
+          (d.v<=0?'ยังไม่ได้ตั้งงบ':dpc>100?'เกินงบวันนี้ '+m0(used-d.v):'ยังใช้ได้อีก '+m0(d.v-used))+'</div></div>'+
+      '<div style="margin-left:auto;text-align:right"><div class="xs fnt">7 วันหลังสุด</div>'+
+        '<div style="display:flex;align-items:flex-end;gap:3px;height:24px;margin-top:4px">'+
+          l7.map(function(x,i){var hh=Math.max(8,x.v/mx7*100);
+            var col=i===6?'#4CBF95':(d.v>0&&x.v>d.v?'#E97473':'var(--line)');
+            return '<i style="width:6px;height:'+hh.toFixed(0)+'%;background:'+col+';border-radius:2px;display:block"></i>'}).join('')+
+        '</div></div>'+
+    '</div></div></div>';
 
-  h+='<div class="grid g2">';
-  var seg=[{n:'หักอัตโนมัติ',v:pl.dedAll,c:SERIES[1]},{n:'ใช้จ่ายจริง',v:pl.spentOther,c:SERIES[0]},
-           {n:'เก็บ + ลงทุน',v:pl.put,c:SERIES[2]},{n:'คงเหลือ',v:Math.max(0,pl.free),c:SERIES[3]}];
-  var totSeg=sum(seg,function(x){return x.v});
-  h+='<div class="card"><div class="hd"><div><div class="eyebrow">จากยอดจริงที่บันทึก</div><h3>เงินรอบนี้ไปไหนบ้าง</h3></div>'+
-      '<div class="act"><span class="xs fnt">'+(pl.inc>0?'จากรายรับ '+m0(pl.inc):'ยังไม่มีรายรับในรอบนี้')+'</span></div></div>'+
-      '<div class="pad donut">'+donut(seg,totSeg>0?Math.round(Math.max(0,pl.free)/totSeg*100)+'%':'—','คงเหลือ')+legend(seg)+'</div></div>';
+  /* ── 3. เงินอยู่ตรงไหน ─────────────────────────────── */
+  var buckets=[{n:'พอร์ตหุ้น',v:p.val},{n:'กองทุนฯ',v:w.pvd},{n:'เงินฉุกเฉิน',v:balEmg()},
+               {n:'เก็บกับแฟน',v:partnerValue()},{n:'เก็บไปเที่ยว',v:balTrv()},{n:'ออมอื่นๆ',v:balEtc()}]
+    .filter(function(x){return x.v>0}).sort(function(x,y){return y.v-x.v})
+    .map(function(x,i){return {n:x.n,v:x.v,c:pc(i)}});
+  var topShare=w.assets>0&&buckets.length?Math.round(buckets[0].v/w.assets*100):0;
+  h+=donutCard('เงินอยู่ตรงไหน','<span class="num sm mut">'+m0(w.assets)+'</span>',
+      buckets,topShare?topShare+'%':'—',buckets.length?buckets[0].n:'',130);
 
-  var eg=b.emergencyTarget>0?Math.min(100,balEmg()/b.emergencyTarget*100):0;
-  h+='<div class="card"><div class="hd"><div><div class="eyebrow">เป้าหมายสำคัญ</div><h3>เงินสำรองฉุกเฉิน</h3></div></div>'+
-      '<div class="pad" style="padding-top:10px">'+
-      '<span class="num" style="font-size:28px">'+m0(balEmg())+'</span>'+
-      '<div class="xs fnt" style="margin-top:4px">เงินสดในบัญชี '+m0(b.cash)+
-        ((+b.emergency||0)>0?' + ตั้งต้น '+m0(b.emergency):'')+
-        ' + บันทึกไว้ '+m0(savedCat('s1'))+
-        ' + ยกมาจากรอบก่อน '+m0(carryOver())+' + เหลือจากรอบนี้ '+m0(leftoverNow())+'</div>'+
+  /* ── 4. พอร์ตหุ้น ──────────────────────────────────── */
+  var hold=p.rows.map(function(r){return {n:r.h.symbol,v:r.valThb,c:pc(holdIx(r.h))}});
+  if(hold.length>PASTEL.length){
+    var rest=hold.slice(PASTEL.length);
+    hold=hold.slice(0,PASTEL.length);
+    hold.push({n:'อื่นๆ '+rest.length+' ตัว',v:sum(rest,function(x){return x.v}),c:PMUTE,mut:1});
+  }
+  h+=donutCard('พอร์ตหุ้น',
+      (p.cost>0?'<span class="chip2" style="background:'+(p.pl>=0?'rgba(29,154,108,.13)':'rgba(223,90,78,.13)')+';color:'+(p.pl>=0?'var(--pos)':'var(--neg)')+'">'+
+        (p.pl>=0?'▲ +':'▼ ')+m0(p.pl)+' · '+p.plp.toFixed(2)+'%</span>':'<span class="xs fnt">ยังไม่มีต้นทุน</span>'),
+      hold,m0(p.val),S.holdings.length+' สินทรัพย์',118,'66px 1fr 62px');
+  if(S.holdings.length)
+    h+='<div class="card" style="margin-top:-6px"><div class="pad" style="padding-top:12px;display:flex;font-size:12px;color:var(--muted);flex-wrap:wrap;gap:8px">'+
+      '<span>DCA เดือนละ <b class="num" style="color:var(--ink)">'+m0(dcaTotal())+'</b></span>'+
+      '<span style="margin-left:auto">ต้นทุนรวม <b class="num" style="color:var(--ink)">'+m0(p.cost)+'</b></span></div></div>';
 
-      '<div class="bar" style="margin-top:10px"><div class="lin"><span class="sm mut">'+eg.toFixed(0)+'% ของเป้าหมาย</span><span class="v num sm">'+m0(b.emergencyTarget)+'</span></div>'+
-      '<div class="track"><i style="width:'+eg.toFixed(1)+'%"></i></div></div>'+
-      '<div class="grid g2" style="margin-top:14px;gap:10px">'+
-        miniGoal('เที่ยว',balTrv(),'ตั้งต้น '+m0(b.travel)+' + บันทึกไว้ '+m0(savedCat('s2')))+
-        miniGoal('เงินเก็บกับแฟน',partnerValue(),partnerSub())+
-      '</div>'+
-
-      '</div></div>';
-  h+='</div>';
-
-  var recent=S.tx.filter(function(t){return t.date>=startD()})
-    .sort(function(a,b2){return a.date<b2.date?1:a.date>b2.date?-1:(b2.ts||0)-(a.ts||0)}).slice(0,5);
-  h+='<div class="grid g2">';
-  h+='<div class="card"><div class="hd"><div><div class="eyebrow">ล่าสุด</div><h3>รายการเคลื่อนไหว</h3></div>'+
-      '<div class="act"><button class="btn sm ghost" data-tab="tx">ดูทั้งหมด ›</button></div></div>'+
-      (recent.length?'<div class="list" style="margin-top:8px">'+recent.map(txRow).join('')+'</div>'
-        :'<div class="empty"><div class="eb">'+icon('list')+'</div>ยังไม่มีรายการ<br><span class="sm">กดเพิ่มรายการครั้งแรก ใช้เวลาไม่ถึง 10 วินาที</span></div>')+
-    '</div>';
-  var p=w.port;
-  h+='<div class="card"><div class="hd"><div><div class="eyebrow">ทรัพย์สินเพื่ออนาคต</div><h3>พอร์ตลงทุน</h3></div>'+
-      '<div class="act"><button class="btn sm ghost" data-tab="port">เปิดพอร์ต ›</button></div></div>'+
-      '<div class="pad" style="padding-top:10px">'+
-      '<span class="num" style="font-size:28px">'+m0(p.val+w.pvd)+'</span>'+
-      '<div class="sm fnt" style="margin-top:4px">รวมในมูลค่าสุทธิแล้ว</div>'+
-      '<div class="grid g2" style="margin-top:14px;gap:10px">'+
-        miniBox('กองทุนสำรองฯ',m0(w.pvd),'เข้าเดือนละ '+m0(pvdMonthly())+' (เรา+นายจ้าง)',SERIES[2])+
-        miniBox('พอร์ตหุ้น',m0(p.val),'DCA '+m0(dcaTotal())+' / เดือน',SERIES[0])+
+  /* ── 5. รายจ่ายตามหมวด ─────────────────────────────── */
+  var byC={};
+  txOf(V.mk).forEach(function(t){if(t.type!=='expense')return;byC[t.cat]=(byC[t.cat]||0)+(+t.amount||0)});
+  var cats=Object.keys(byC).map(function(k){return {n:cat('expense',k).n,v:byC[k]}})
+    .sort(function(x,y){return y.v-x.v}).map(function(x,i){return {n:x.n,v:x.v,c:pc(i)}});
+  if(cats.length>PASTEL.length){
+    var cr=cats.slice(PASTEL.length);cats=cats.slice(0,PASTEL.length);
+    cats.push({n:'อื่นๆ',v:sum(cr,function(x){return x.v}),c:PMUTE,mut:1});
+  }
+  var mks=recentMks(5),bars=mks.map(function(mk){return {mk:mk,v:sums(mk).expense}});
+  var mxb=Math.max.apply(null,bars.map(function(x){return x.v}).concat([1]));
+  var prev=bars.length>1?bars[bars.length-2].v:0,cur=s.expense;
+  var diff=prev>0?((cur-prev)/prev*100):0;
+  h+=donutCard('รายจ่ายตามหมวด',
+      (prev>0?'<span class="chip2" style="background:'+(diff<=0?'rgba(29,154,108,.13)':'rgba(223,90,78,.13)')+';color:'+(diff<=0?'var(--pos)':'var(--neg)')+'">'+
+        (diff<=0?'▼ ต่ำกว่าเดือนก่อน ':'▲ สูงกว่าเดือนก่อน ')+Math.abs(diff).toFixed(0)+'%</span>'
+       :'<span class="num sm mut">'+m0(s.expense)+'</span>'),
+      cats,m0(s.expense),cats.length+' หมวด',118,'92px 1fr 58px');
+  if(bars.length>1)
+    h+='<div class="card" style="margin-top:-6px"><div class="pad" style="padding-top:12px">'+
+      '<div style="display:flex;align-items:flex-end;gap:7px;height:34px">'+
+        bars.map(function(x,i){var last=i===bars.length-1;
+          return '<i style="flex:1;height:'+Math.max(8,x.v/mxb*100).toFixed(0)+'%;background:'+(last?PASTEL[0]:'var(--line)')+';border-radius:4px 4px 2px 2px;display:block"></i>'}).join('')+
+      '</div><div style="display:flex;margin-top:6px">'+
+        bars.map(function(x,i){var last=i===bars.length-1;
+          return '<span class="xs" style="flex:1;color:'+(last?PASTEL[0]:'var(--faint)')+';font-weight:'+(last?600:400)+'">'+esc(TH_M[+x.mk.slice(5,7)-1])+'</span>'}).join('')+
       '</div></div></div>';
-  h+='</div>';
+
+  /* ── 6. ล่าสุด ─────────────────────────────────────── */
+  var recent=S.tx.filter(function(t){return t.date>=startD()})
+    .sort(function(x,y){return x.date<y.date?1:x.date>y.date?-1:(y.ts||0)-(x.ts||0)}).slice(0,4);
+  if(recent.length)
+    h+='<div class="card"><div class="hd"><div><div class="eyebrow">ล่าสุด</div><h3>รายการเคลื่อนไหว</h3></div>'+
+      '<div class="act"><button class="btn sm ghost" data-tab="tx">ดูทั้งหมด ›</button></div></div>'+
+      '<div class="list" style="margin-top:6px">'+recent.map(txRow).join('')+'</div></div>';
+
   return h;
 }
 function dailyCard(){
@@ -1023,7 +1125,7 @@ function notices(){
   }
   var d=dailyBudget(mkOf(t)),used=spentOn(t),pc=d.v>0?used/d.v*100:0;
   if(d.v>0&&pc>100)
-    out.push(note('crit','🚨','วันนี้ใช้เกินงบรายวันแล้ว '+m0(used-d.v),'งบวันละ '+m0(d.v)+' · ใช้ไป '+m0(used)+' ถ้าใช้เท่านี้ทั้งเดือนจะเกินงบ '+m0((used-d.v)*d.days),'tab:tx','ดูรายการ'));
+    out.push(note('crit','🚨','วันนี้ใช้เกินงบรายวันแล้ว '+m0(used-d.v),'งบวันละ '+m0(d.v)+' · ใช้ไป '+m0(used),'tab:tx','ดูรายการ'));
   else if(d.v>0&&pc>=80)
     out.push(note('warn','🔔','ใกล้ครบงบของวันนี้แล้ว ('+Math.round(pc)+'%)','เหลืออีก '+m0(d.v-used)+' จากงบวันละ '+m0(d.v),'tab:tx','ดูรายการ'));
   if(!S.tx.some(function(x){return x.date===t}))
