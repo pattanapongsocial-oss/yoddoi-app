@@ -564,6 +564,8 @@ var SYMN={VOO:'Vanguard S&P 500 ETF',IVV:'iShares Core S&P 500 ETF',SPY:'SPDR S&
   MSFT:'Microsoft Corporation',AMD:'Advanced Micro Devices',MU:'Micron Technology, Inc.',
   RKLB:'Rocket Lab Corporation',CRCL:'Circle Internet Group, Inc.',
   SPCX:'Space Exploration Technologies (SpaceX)',
+  'BRK.B':'Berkshire Hathaway Inc. Class B','BRK-B':'Berkshire Hathaway Inc. Class B',
+  SGOV:'iShares 0-3 Month Treasury Bond ETF',
   AVGO:'Broadcom Inc.',TSM:'Taiwan Semiconductor (TSMC)',NFLX:'Netflix, Inc.',
   PLTR:'Palantir Technologies',COIN:'Coinbase Global, Inc.'};
 /* ชื่อที่ผู้ใช้กรอกเองมาก่อน แล้วค่อยชื่อที่ดึงมาจากตลาด แล้วค่อยรายชื่อในตัวแอป */
@@ -630,8 +632,8 @@ function spentOn(ds){return sum(S.tx.filter(function(t){return t.type==='expense
 var HOSTED=!(window.claude&&window.claude.use);
 function yahooSym(h){
   var s=(h.symbol||'').trim().toUpperCase();
-  if(h.cur==='THB'&&s.indexOf('.')<0)s+='.BK';
-  return s;
+  if(h.cur==='THB')return s.indexOf('.')<0?s+'.BK':s;
+  return s.replace(/\./g,'-');   /* หุ้นสหรัฐฯ ที่มีจุด เช่น BRK.B ฝั่ง Yahoo ใช้ BRK-B */
 }
 function getJSON(u){
   return fetch(u,{cache:'no-store',mode:'cors'}).then(function(r){if(!r.ok)throw new Error('HTTP '+r.status);return r.json()});
@@ -1203,7 +1205,9 @@ function vPort(){
   h+='<div class="card"><div class="hd"><div><div class="eyebrow">รายละเอียดและจัดการ</div><h3>หุ้นที่ถืออยู่</h3></div>'+
     '<div class="act"><span class="pill '+(priceStale()<1?'up':'sd')+'">'+(priceStale()<1?'ราคาอัปเดตแล้ว':'ราคายังไม่อัปเดตวันนี้')+'</span>'+
     '<button class="btn sm ghost" data-a="autoprice">⟳ ดึงราคาอัตโนมัติ</button>'+
-    '<button class="btn sm ghost" data-a="prices">กรอกเอง</button><button class="btn sm pri" data-a="addh">＋ เพิ่มหุ้น</button></div></div>';
+    '<button class="btn sm ghost" data-a="prices">กรอกเอง</button>'+
+    '<button class="btn sm ghost" data-a="buys">⇪ นำเข้ารายการซื้อ</button>'+
+    '<button class="btn sm pri" data-a="addh">＋ เพิ่มหุ้น</button></div></div>';
   if(!S.holdings.length)h+='<div class="empty"><div class="eb">'+icon('pie')+'</div>ยังไม่มีหุ้นในพอร์ต<br><span class="sm">กด “เพิ่มหุ้น” เพื่อเริ่มบันทึก</span></div>';
   else{
     h+='<div class="pad grid g2">'+p.rows.map(function(r,i){
@@ -1463,6 +1467,83 @@ function hSheet(h){
     });
   });
 }
+
+/* ---------- นำเข้ารายการซื้อจากแอปโบรกเกอร์ (วางข้อความทีเดียวได้หลายตัว) ---------- */
+var BUYSEED='VOO 1999.99 700.87 0.0852939\nNVDA 599.97 218.94 0.0820316\nGOOGL 499.73 333.93 0.0447998\nAMZN 499.92 254.48 0.0588258\nMETA 499.92 578.02 0.0258987\nSPCX 499.92 142.81 0.1048245\nTSLA 249.79 360.62 0.0207420\nCRCL 149.74 87.87 0.0509844\nBRK.B 699.68 504.33 0.0415402';
+var BUYSEED_DATE='2026-09-02';
+function buysDone(d){return S.tx.some(function(t){return t.date===d&&t.buy})}
+function parseBuys(txt){
+  var out=[],bad=[];
+  String(txt||'').split(/\n/).forEach(function(line){
+    var v=line.trim();if(!v)return;
+    var f=v.split(/[\s,\t]+/).filter(function(x){return x!==''});
+    if(f.length<4){bad.push(v);return}
+    var sym=f[0].toUpperCase().replace(/[^A-Z0-9.\-]/g,'');
+    var num=function(x){return parseFloat(String(x).replace(/,/g,''))};
+    var baht=num(f[1]),price=num(f[2]),q=num(f[3]);
+    if(!sym||!(q>0)||!(price>0)){bad.push(v);return}
+    out.push({sym:sym,baht:baht>0?baht:0,price:price,qty:q});
+  });
+  return {rows:out,bad:bad};
+}
+function applyBuys(rows,date,cur,catId){
+  rows.forEach(function(r){
+    var h=null;
+    for(var i=0;i<S.holdings.length;i++)
+      if((S.holdings[i].symbol||'').toUpperCase()===r.sym){h=S.holdings[i];break}
+    if(!h){
+      h={id:uid(),symbol:r.sym,name:symName(r.sym),qty:0,cost:0,price:0,cur:cur,updated:''};
+      S.holdings.push(h);
+    }
+    var oq=+h.qty||0,oc=+h.cost||0,nq=oq+r.qty;
+    h.cost=nq>0?(oq*oc+r.qty*r.price)/nq:r.price;   /* ต้นทุนเฉลี่ยถ่วงน้ำหนัก */
+    h.qty=nq;
+    if(!(+h.price>0))h.price=r.price;
+    if(!h.name)h.name=symName(r.sym);
+    if(r.baht>0)
+      S.tx.push({id:uid(),type:'invest',amount:n2(r.baht),cat:catId,date:date,
+        note:r.sym,ts:Date.now(),buy:1});
+  });
+}
+function buySheet(){
+  var d=today()<startD()?startD():today();
+  var pre=(!buysDone(BUYSEED_DATE)&&BUYSEED)?BUYSEED:'';
+  if(pre)d=BUYSEED_DATE;
+  var opts=(S.cats.invest||[]).map(function(c){
+    return '<option value="'+c.id+'"'+(c.id==='v1'?' selected':'')+'>'+esc(c.e+' '+c.n)+'</option>'}).join('');
+  var body='<div class="hint">วางรายการซื้อจากแอปโบรกเกอร์ บรรทัดละ 1 ตัว เรียงเป็น '+
+      '<b>ชื่อย่อ · จำนวนเงินบาท · ราคาที่ได้จริง · จำนวนหุ้น</b> (เว้นวรรคหรือคอมมาก็ได้)<br>'+
+      'ระบบจะบวกจำนวนหุ้นเข้าพอร์ต คิดต้นทุนเฉลี่ยให้ใหม่ และลงรายการลงทุนตามจำนวนเงินให้เอง</div>'+
+    '<div><label for="bt">รายการซื้อ</label>'+
+      '<textarea id="bt" rows="9" spellcheck="false" style="font-family:\'IBM Plex Mono\',monospace;font-size:13px" '+
+      'placeholder="VOO 1999.99 700.87 0.0852939">'+esc(pre)+'</textarea></div>'+
+    '<div class="fgrid"><div><label for="bd">วันที่ซื้อ</label><input id="bd" type="date" value="'+d+'"></div>'+
+      '<div><label for="bc">สกุลเงินของราคา</label><select id="bc">'+
+        '<option value="USD" selected>ดอลลาร์ (USD)</option><option value="THB">บาท (THB)</option></select></div></div>'+
+    '<div><label for="bcat">ลงเป็นหมวด</label><select id="bcat">'+opts+'</select></div>'+
+    '<div class="hint" id="bpv"></div>'+
+    '<button class="btn pri" id="ok">เพิ่มเข้าพอร์ต</button>';
+  sheet('นำเข้ารายการซื้อ',body,function(s2,close){
+    var ta=s2.querySelector('#bt');
+    function prev(){
+      var r=parseBuys(ta.value);
+      var tot=sum(r.rows,function(x){return x.baht});
+      s2.querySelector('#bpv').innerHTML=r.rows.length
+        ? 'อ่านได้ <b>'+r.rows.length+' รายการ</b> รวม <b class="num">'+m0(tot)+'</b>'+
+          (r.bad.length?' · ข้ามไป '+r.bad.length+' บรรทัดที่อ่านไม่ออก':'')+
+          '<br><span class="fnt">'+esc(r.rows.map(function(x){return x.sym}).join(' · '))+'</span>'
+        : 'ยังไม่มีบรรทัดที่อ่านได้';
+    }
+    ta.addEventListener('input',prev);prev();
+    s2.querySelector('#ok').addEventListener('click',function(){
+      var r=parseBuys(ta.value);
+      if(!r.rows.length){ta.focus();return}
+      applyBuys(r.rows,s2.querySelector('#bd').value||today(),
+        s2.querySelector('#bc').value,s2.querySelector('#bcat').value);
+      close();commit();
+    });
+  });
+}
 function pricesSheet(){
   if(!S.holdings.length){hSheet();return}
   var body='<div class="hint">ใส่ราคาปิดล่าสุดของแต่ละตัว แล้วกดบันทึกครั้งเดียว</div>'+
@@ -1650,6 +1731,7 @@ document.addEventListener('click',function(e){
       confirmSheet('ลบรายการ','ลบ “'+esc(tx.note||cat(tx.type,tx.cat).n)+'” จำนวน '+money(tx.amount)+' ออกถาวรหรือไม่'+
           (isSal?' — รายการหักอัตโนมัติที่มากับเงินเดือนก้อนนี้จะถูกลบไปด้วย':''),
         function(){S.tx=S.tx.filter(function(x){return x.id!==id&&!(isSal&&x.pid===id)});commit()})}
+    else if(a==='buys')buySheet();
     else if(a==='addh')hSheet(null);
     else if(a==='edith')hSheet(S.holdings.find(function(x){return x.id===id}));
     else if(a==='delh'){var hh=S.holdings.find(function(x){return x.id===id});
