@@ -635,14 +635,35 @@ function yahooSym(h){
   if(h.cur==='THB')return s.indexOf('.')<0?s+'.BK':s;
   return s.replace(/\./g,'-');   /* หุ้นสหรัฐฯ ที่มีจุด เช่น BRK.B ฝั่ง Yahoo ใช้ BRK-B */
 }
+function delay(ms){return new Promise(function(r){setTimeout(r,ms)})}
 function getJSON(u){
-  return fetch(u,{cache:'no-store',mode:'cors'}).then(function(r){if(!r.ok)throw new Error('HTTP '+r.status);return r.json()});
+  return fetch(u,{cache:'no-store',mode:'cors'}).then(function(r){
+    if(r.status===429)throw new Error('ถูกจำกัดจำนวนครั้ง');
+    if(!r.ok)throw new Error('แหล่งข้อมูลตอบ HTTP '+r.status);
+    return r.text();
+  }).then(function(t){
+    var v=(t||'').replace(/^\uFEFF/,'').trim();
+    /* โดนจำกัดจำนวนครั้งมักตอบกลับเป็นหน้าเว็บ ไม่ใช่ JSON */
+    if(v.charAt(0)!=='{'&&v.charAt(0)!=='[')throw new Error('ถูกจำกัดจำนวนครั้ง');
+    return JSON.parse(v);
+  });
+}
+/* ยิงทีละตัวโดยเว้นจังหวะ ไม่ยิงพร้อมกันรวดเดียวจนโดนบล็อก */
+function runSeq(list,fn,gap){
+  var out=[],i=0;
+  function step(){
+    if(i>=list.length)return Promise.resolve(out);
+    return fn(list[i++]).then(function(r){out.push(r);return delay(gap||220)}).then(step);
+  }
+  return step();
 }
 function chartURLs(sym){
   var path='/v8/finance/chart/'+encodeURIComponent(sym)+'?interval=1d&range=5d';
-  return ['https://query1.finance.yahoo.com'+path,
-          'https://query2.finance.yahoo.com'+path,
-          'https://api.allorigins.win/raw?url='+encodeURIComponent('https://query1.finance.yahoo.com'+path)];
+  var y1='https://query1.finance.yahoo.com'+path,y2='https://query2.finance.yahoo.com'+path;
+  return [y1,y2,
+    'https://api.allorigins.win/raw?url='+encodeURIComponent(y1),
+    'https://api.codetabs.com/v1/proxy?quest='+encodeURIComponent(y2),
+    'https://corsproxy.io/?url='+encodeURIComponent(y1)];
 }
 function readChart(j,sym){
   var m=j&&j.chart&&j.chart.result&&j.chart.result[0]&&j.chart.result[0].meta;
@@ -665,22 +686,38 @@ function quoteOf(sym){
 }
 function fetchRate(){
   return quoteOf('THB=X').catch(function(){
-    return tryChain(['https://open.er-api.com/v6/latest/USD',
-                     'https://api.allorigins.win/raw?url='+encodeURIComponent('https://open.er-api.com/v6/latest/USD')],
+    var er='https://open.er-api.com/v6/latest/USD';
+    return tryChain([er,
+                     'https://api.allorigins.win/raw?url='+encodeURIComponent(er),
+                     'https://api.codetabs.com/v1/proxy?quest='+encodeURIComponent(er)],
       function(j){var r=j&&j.rates&&j.rates.THB;if(!(r>0))throw new Error('ไม่พบอัตราแลกเปลี่ยน');return +r});
   });
 }
-function autoPrices(){
+function autoPrices(onStep){
   if(typeof fetch!=='function')return Promise.resolve([{sym:'—',ok:false,e:'เบราว์เซอร์ไม่รองรับ'}]);
-  var jobs=S.holdings.map(function(h){
+  var done=0,total=S.holdings.length+1;
+  function one(h){
     return quoteOf(yahooSym(h)).then(
-      function(p){h.price=Math.round(p*10000)/10000;h.updated=today();return {sym:h.symbol,ok:true,p:p,cur:h.cur}},
-      function(e){return {sym:h.symbol,ok:false,e:(e&&e.message)||'ดึงราคาไม่ได้'}});
-  });
-  jobs.push(fetchRate().then(
-    function(r){S.settings.usdthb=Math.round(r*100)/100;return {sym:'USD/THB',ok:true,p:r,cur:'RATE'}},
-    function(e){return {sym:'USD/THB',ok:false,e:(e&&e.message)||'ดึงอัตราไม่ได้'}}));
-  return Promise.all(jobs).then(function(res){S.settings.lastAuto=today();return res});
+      function(p){h.price=Math.round(p*10000)/10000;h.updated=today();return {sym:h.symbol,ok:true,p:p,cur:h.cur,h:h}},
+      function(e){return {sym:h.symbol,ok:false,e:(e&&e.message)||'ดึงราคาไม่ได้',h:h}}
+    ).then(function(r){done++;if(onStep)onStep(done,total);return r});
+  }
+  return runSeq(S.holdings.slice(),one,220).then(function(res){
+    var fail=res.filter(function(r){return !r.ok});
+    if(!fail.length)return res;
+    /* ตัวที่พลาดรอบแรกมักเพราะโดนจำกัดจำนวนครั้ง พักแล้วลองใหม่ให้เอง */
+    done-=fail.length;
+    return delay(1600).then(function(){
+      return runSeq(fail.map(function(r){return r.h}),one,500).then(function(res2){
+        var by={};res2.forEach(function(r){by[r.h.id]=r});
+        return res.map(function(r){return by[r.h.id]||r});
+      });
+    });
+  }).then(function(res){
+    return fetchRate().then(
+      function(r){S.settings.usdthb=Math.round(r*100)/100;res.push({sym:'USD/THB',ok:true,p:r,cur:'RATE'});return res},
+      function(e){res.push({sym:'USD/THB',ok:false,e:(e&&e.message)||'ดึงอัตราไม่ได้'});return res});
+  }).then(function(res){S.settings.lastAuto=today();return res});
 }
 function autoSheet(){
   sheet('ดึงราคาจากตลาดอัตโนมัติ',
@@ -689,18 +726,19 @@ function autoSheet(){
     '<div class="fgrid"><button class="btn" data-close="1">ปิด</button>'+
     '<button class="btn pri" data-a="prices" data-close="1">กรอกราคาเอง</button></div>',
     function(s){
-      autoPrices().then(function(res){
+      var st=s.querySelector('#st');
+      autoPrices(function(d,t){if(st)st.textContent='กำลังดึงราคา '+d+' / '+t+' …'}).then(function(res){
         var ok=res.filter(function(r){return r.ok}).length;
+        var bad=res.length-ok;
         s.querySelector('#st').innerHTML=ok
-          ? 'อัปเดตสำเร็จ '+ok+' รายการ · '+dLabel(today())
+          ? 'อัปเดตสำเร็จ '+ok+' รายการ'+(bad?' · ไม่สำเร็จ '+bad+' รายการ กด “ดึงราคาอัตโนมัติ” ซ้ำอีกครั้งได้':'')+' · '+dLabel(today())
           : (HOSTED
-            ? 'ดึงราคาไม่สำเร็จ — แหล่งข้อมูลอาจปิดรับคำขอจากเบราว์เซอร์ชั่วคราว ลองใหม่อีกครั้ง หรือกรอกราคาเอง'
-            : '<b>หน้านี้ดึงราคาจากอินเทอร์เน็ตไม่ได้</b><br>หน้าที่เผยแพร่บน claude.ai ถูกกันไม่ให้ติดต่อเว็บภายนอกทุกกรณี (ข้อความ “Failed to fetch” คือการถูกกันนั้น) '+
-              'ใช้ปุ่มกรอกเองด้านล่าง หรือเปิดเวอร์ชัน PWA ที่โฮสต์เองเพื่อให้ดึงราคาอัตโนมัติได้');
+            ? 'ดึงราคาไม่สำเร็จ — แหล่งข้อมูลจำกัดจำนวนครั้ง ลองใหม่อีกสักครู่ หรือกรอกราคาเอง'
+            : 'หน้าบน claude.ai ติดต่อเว็บภายนอกไม่ได้ ให้กรอกราคาเอง หรือใช้เว็บของเรา');
         s.querySelector('#rows').innerHTML='<div class="list">'+res.map(function(r){
           var nm=r.cur==='RATE'?'':symName(r.sym);
           return '<div class="item"><div class="mid"><div class="t">'+esc(r.sym)+(nm?' <span class="fnt">· '+esc(nm)+'</span>':'')+'</div>'+
-            '<div class="s">'+(r.ok?(r.cur==='RATE'?'อัตราแลกเปลี่ยนล่าสุด':'ราคาตลาดล่าสุด'):esc(r.e))+'</div></div>'+
+            '<div class="s'+(r.ok?'':' neg')+'">'+(r.ok?(r.cur==='RATE'?'อัตราแลกเปลี่ยนล่าสุด':'ราคาตลาดล่าสุด'):esc(r.e))+'</div></div>'+
             '<div class="amt num '+(r.ok?'':'fnt')+'">'+(r.ok?(r.cur==='RATE'?r.p.toFixed(2):money(r.p,r.cur)):'—')+'</div></div>';
         }).join('')+'</div>';
         if(ok)commit();
@@ -858,11 +896,11 @@ function vHome(){
         ? '<div style="margin-top:12px"><div class="cap" style="margin:0">เงินคงเหลือของรอบนี้</div>'+
           '<span class="big num '+(pl.free<0?'neg':'')+'">'+m0(pl.free)+'</span>'+
           '<div class="cap" style="margin-top:4px">'+(pl.auto
-            ? 'เงินเดือน '+m0(pl.gross)+' − หักอัตโนมัติ '+m0(pl.dedAll)+' (ปกส. · กองทุนฯ · กยศ. ลงรายการให้แล้ว) − ใช้ไป '+m0(pl.spentOther)+' − เก็บ/ลงทุน '+m0(pl.put)
-            : 'จากเงินเดือนที่ตั้งไว้ในหน้าตั้งค่า '+m0(pl.gross)+' หักอัตโนมัติ '+m0(pl.ded)+' — บันทึกรายรับหมวด “เงินเดือน” แล้วระบบจะใช้ยอดจริงและลงรายการหักให้เอง')+'</div></div>'
+            ? m0(pl.gross)+' − หัก '+m0(pl.dedAll)+' − ใช้ไป '+m0(pl.spentOther)+' − เก็บ/ลงทุน '+m0(pl.put)
+            : 'จากเงินเดือนที่ตั้งไว้ '+m0(pl.gross)+' − หัก '+m0(pl.ded))+'</div></div>'
         : '<div style="margin-top:12px"><div class="cap" style="margin:0">ยังไม่ได้ใส่เงินเดือนของรอบนี้</div>'+
           '<span class="big num">—</span>'+
-          '<div class="cap" style="margin-top:4px">กด “บันทึกรายการ” เลือกรายรับ → หมวดเงินเดือน ระบบจะหักประกันสังคม กองทุนสำรองฯ และ กยศ. ให้อัตโนมัติ ส่วนที่เหลือกรอกเองตามจริง</div></div>')+
+          '<div class="cap" style="margin-top:4px">บันทึกรายรับหมวดเงินเดือน แล้วระบบจะหักให้เอง</div></div>')+
       '<div class="foot"><div><div class="k">ใช้ไปแล้ว</div><div class="v num">'+m0(pl.spentOther)+'</div></div>'+
         '<div><div class="k">เก็บและลงทุน</div><div class="v num">'+m0(pl.put)+'</div></div>'+
         '<button class="btn deep" data-a="addtx" style="background:rgba(255,255,255,.16)">＋ บันทึกรายการ</button></div>'+
@@ -877,7 +915,7 @@ function vHome(){
       '<div style="margin-top:12px;padding-top:12px;border-top:1px solid var(--line);display:flex;align-items:center;gap:9px;flex-wrap:wrap">'+
         '<div><div class="xs fnt">ภาษีหัก ณ ที่จ่าย (สะสม)</div><span class="num" style="font-size:18px">'+m0(whtTotal())+'</span></div>'+
         '<button class="btn sm ghost" data-a="addtx" style="margin-left:auto">＋ บันทึกรายการ</button></div>'+
-      '<div class="xs fnt" style="margin-top:6px">บันทึกได้ที่หมวด “ภาษีหัก ณ ที่จ่าย” ในรายจ่าย ระบบจะบวกสะสมให้เอง · ยอดนี้ขอคืนได้ตอนยื่นภาษี จึงยังไม่นับในมูลค่าสุทธิ</div>'+
+
       '</div></div>';
   h+='</div>';
 
@@ -904,17 +942,14 @@ function vHome(){
         ((+b.emergency||0)>0?' + ตั้งต้น '+m0(b.emergency):'')+
         ' + บันทึกไว้ '+m0(savedCat('s1'))+
         ' + ยกมาจากรอบก่อน '+m0(carryOver())+' + เหลือจากรอบนี้ '+m0(leftoverNow())+'</div>'+
-      (leftoverNow()>0
-        ? '<div class="xs fnt" style="margin-top:3px">ยอด <b>'+m0(leftoverNow())+'</b> ของรอบนี้ขยับตามเงินคงเหลือแบบเรียลไทม์ และจะถูกล็อกเป็นเงินฉุกเฉินเมื่อขึ้นรอบใหม่</div>'
-        : '')+
+
       '<div class="bar" style="margin-top:10px"><div class="lin"><span class="sm mut">'+eg.toFixed(0)+'% ของเป้าหมาย</span><span class="v num sm">'+m0(b.emergencyTarget)+'</span></div>'+
       '<div class="track"><i style="width:'+eg.toFixed(1)+'%"></i></div></div>'+
       '<div class="grid g2" style="margin-top:14px;gap:10px">'+
         miniGoal('เที่ยว',balTrv(),'ตั้งต้น '+m0(b.travel)+' + บันทึกไว้ '+m0(savedCat('s2')))+
         miniGoal('เงินเก็บกับแฟน',partnerValue(),partnerSub())+
       '</div>'+
-      '<div class="hint" style="margin-top:11px">บันทึกรายการแบบ “เงินเก็บ” เลือกหมวดไหน ยอดจะไปสะสมในเป้าหมายนั้นให้เองทันที<br>'+
-      '<b>เงินเก็บกับแฟน</b>เป็นหุ้น IVV ล้วน ไม่มีส่วนที่เป็นเงินสด — ยอดคิดจากจำนวนหุ้น × ราคาล่าสุด ซื้อเพิ่มเดือนไหนแล้วแก้จำนวนหุ้นในหน้าพอร์ตลงทุนได้เลย</div>'+
+
       '</div></div>';
   h+='</div>';
 
@@ -1046,9 +1081,17 @@ function vTx(){
     h+='</div>';
   }
   h+='</div>';
+  var byC={};
+  txOf(V.mk).forEach(function(t){if(t.type!=='expense')return;byC[t.cat]=(byC[t.cat]||0)+(+t.amount||0)});
+  var cseg=foldSeries(Object.keys(byC).map(function(k){return {n:cat('expense',k).e+' '+cat('expense',k).n,v:byC[k]}})
+    .sort(function(a,b){return b.v-a.v}).map(function(c,i){return {n:c.n,v:c.v,c:pc(i)}}));
+  h+='<div class="card"><div class="hd"><div><div class="eyebrow">'+esc(mShort(V.mk))+'</div><h3>รายจ่ายตามหมวด</h3></div></div>'+
+    (cseg.length?'<div class="pad donut">'+donut(cseg,m0(s.expense),'รายจ่ายรวม')+legend(cseg)+'</div>'
+      :'<div class="empty">ยังไม่มีรายจ่ายในรอบนี้</div>')+'</div>';
+
   h+='<div class="grid g2">'+
     '<div class="card"><div class="hd"><div><div class="eyebrow">'+mShort(V.mk)+'</div><h3>สรุปเดือนนี้</h3></div></div><div class="pad bars">'+
-      sumBar('รายรับ',s.income,SERIES[3])+sumBar('รายจ่าย',s.expense,SERIES[5])+sumBar('เงินเก็บ',s.saving,SERIES[2])+sumBar('ลงทุน',s.invest,SERIES[1])+
+      sumBar('รายรับ',s.income,PASTEL[5])+sumBar('รายจ่าย',s.expense,PASTEL[7])+sumBar('เงินเก็บ',s.saving,PASTEL[0])+sumBar('ลงทุน',s.invest,PASTEL[6])+
     '</div></div>'+
     '<div class="card"><div class="hd"><div><div class="eyebrow">คุมค่าใช้จ่าย</div><h3>งบตามหมวด</h3></div>'+
       '<div class="act"><button class="btn sm ghost" data-tab="set">ตั้งงบ</button></div></div><div class="pad">'+budgetBars()+'</div></div>'+
@@ -1084,7 +1127,7 @@ function vYear(){
         '<i class="out" style="width:'+(out/maxBar*100).toFixed(1)+'%"></i></span>'+
       '<span class="yv num '+(net>=0?'pos':'neg')+'">'+(net>=0?'+':'')+m0(net)+'</span></button>';
   }).join('')+'</div>'+
-  '<div class="pad" style="padding-top:0"><div class="hint">แถบบนคือรายรับ แถบล่างคือรายจ่าย+เงินเก็บ+ลงทุน · กดที่เดือนไหนเพื่อเปิดดูรายการของรอบนั้น</div></div>';
+  '';
   h+='</div>';
 
   var byCat={};
@@ -1194,11 +1237,9 @@ function vPort(){
           '<span class="vv num">'+m0(dcaAmt(d))+'</span>'+
           '<div class="tools"><button data-a="editdca" data-id="'+d.id+'" aria-label="แก้ไข '+esc(d.sym)+'">✎</button></div></div>';
       }).join('')+'</div></div>'+
-      '<div class="pad" style="padding-top:0"><div class="hint">'+
-        (Math.abs(dcaPctSum()-100)>0.5
-          ? 'สัดส่วนรวม '+dcaPctSum().toFixed(1)+'% ยังไม่ครบ 100% <button class="btn sm ghost" data-a="normdca" style="margin-left:6px">ปรับให้ครบ 100%</button>'
-          : 'เปลี่ยนยอด DCA ต่อเดือนได้เลย ระบบจะแบ่งเงินตามสัดส่วนนี้ให้อัตโนมัติ ว่าต้องซื้อตัวไหนเท่าไหร่')+
-      '</div></div>'+
+      (Math.abs(dcaPctSum()-100)>0.5
+        ? '<div class="pad" style="padding-top:0"><div class="hint">สัดส่วนรวม '+dcaPctSum().toFixed(1)+'% ยังไม่ครบ 100% <button class="btn sm ghost" data-a="normdca" style="margin-left:6px">ปรับให้ครบ 100%</button></div></div>'
+        : '')+
     '</div>'+
   '</div>';
 
@@ -1233,11 +1274,7 @@ function vPort(){
       '</div>';
     }).join('')+'</div>';
   }
-  h+='<div class="pad" style="padding-top:0"><div class="hint">'+
-    (HOSTED
-      ? 'กด <b>ดึงราคาอัตโนมัติ</b> เพื่อดึงราคาปิดล่าสุดของทุกตัวย่อจากตลาดจริงพร้อมอัตราแลกเปลี่ยน USD/THB (หุ้นไทยใส่ตัวย่อเฉย ๆ ระบบเติม .BK ให้เอง) ถ้าดึงไม่ได้ให้กด <b>กรอกเอง</b>'
-      : 'หน้าที่เผยแพร่บน claude.ai ถูกบล็อกไม่ให้เรียกอินเทอร์เน็ต ราคาจึงต้อง <b>กรอกเอง</b> — ถ้าต้องการให้ดึงราคาตลาดอัตโนมัติทุกวัน ให้ใช้เวอร์ชัน PWA ที่โฮสต์เอง')+
-    ' หากขายหมดแล้วกดถังขยะเพื่อนำหุ้นออก · NAV ของกองทุนสำรองเลี้ยงชีพ '+esc(S.profile.pvd.amc+' '+S.profile.pvd.code)+' ไม่มีแหล่งข้อมูลสาธารณะให้ดึงอัตโนมัติ ให้กรอก NAV และจำนวนหน่วยเองในหน้าตั้งค่า</div></div></div>';
+  h+=(HOSTED?'':'<div class="pad" style="padding-top:0"><div class="hint">หน้าบน claude.ai ดึงราคาไม่ได้ ให้กรอกเอง หรือใช้เว็บของเรา</div></div>')+'</div>';
   return h;
 }
 
@@ -1253,7 +1290,7 @@ function vSet(){
     '<button class="btn ghost" data-a="backup">สำรองข้อมูล</button></div></div></div>';
 
   h+='<div class="card"><div class="setsec">'+
-    lead('ซิงก์ข้ามเครื่อง (Google Drive)', syncBlocked()?'หน้านี้อยู่บน claude.ai จึงต่อ Google Drive ไม่ได้':(syncOn()?'เปิดอยู่ · ข้อมูลถูกเก็บไว้ใน Drive ของคุณเอง':'วางลิงก์ซิงก์ที่ได้จาก Google Apps Script เพื่อให้มือถือกับคอมเห็นข้อมูลตรงกัน'))+
+    lead('ซิงก์ข้ามเครื่อง (Google Drive)', syncBlocked()?'หน้านี้ต่อ Drive ไม่ได้':(syncOn()?'เปิดอยู่':'วางลิงก์ซิงก์เพื่อให้ทุกเครื่องเห็นข้อมูลตรงกัน'))+
     '<div><label for="syncurl">ลิงก์ซิงก์</label>'+
     '<input id="syncurl" type="url" placeholder="https://script.google.com/macros/s/.../exec?token=..." value="'+esc(sync.url)+'">'+
     '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px">'+
@@ -1264,38 +1301,32 @@ function vSet(){
     '</div>'+
     '<div class="hint" style="margin-top:8px">'+
       (syncBlocked()
-        ? '<b>ซิงก์ Google Drive ทำงานบนหน้านี้ไม่ได้</b> — claude.ai กันไม่ให้หน้าเว็บที่เผยแพร่ติดต่อเว็บภายนอกทุกกรณี (เหตุผลเดียวกับที่ดึงราคาหุ้นไม่ได้) ข้อความ “Failed to fetch” คือการถูกกันนั้น ไม่ใช่ลิงก์เสีย<br>'+
-          'หน้านี้ยัง<b>บันทึกข้อมูลให้อัตโนมัติในบัญชี Claude</b> ของคุณอยู่ เปิดลิงก์เดิมจากเครื่องไหนก็เห็นข้อมูลเดียวกัน<br>'+
-          'ถ้าอยากใช้ซิงก์ผ่าน Drive (และให้ราคาหุ้นอัปเดตเอง) ให้เปิดเว็บของเราแทน แล้ววางลิงก์ซิงก์อันเดียวกันทั้งคอมและมือถือ'
+        ? 'หน้าบน claude.ai ต่อ Google Drive ไม่ได้ · ใช้เว็บของเราแทน'
         : syncOn()
-        ? 'สถานะ: '+esc(sync.state==='err'?('ผิดพลาด — '+sync.msg):(sync.state==='busy'?'กำลังซิงก์…':'พร้อมใช้งาน'))+
-          (sync.at?' · ล่าสุด '+esc(new Date(sync.at).toLocaleString('th-TH')):'')+
-          '<br>ทำงานอัตโนมัติทั้งหมด — แก้อะไรก็ส่งขึ้น Drive ให้เองใน 1 วินาที และดึงข้อมูลใหม่ทุกครั้งที่กลับเข้าแอป ทุก 1 นาทีระหว่างเปิดอยู่ และเมื่อเน็ตกลับมา · ปุ่มด้านบนมีไว้สั่งเองเวลาต้องการเท่านั้น'
-        : 'ลิงก์นี้เก็บไว้ในเครื่องนี้เท่านั้น ไม่ถูกฝังลงไฟล์บนเว็บ · ต้องวางลิงก์เดียวกันในทุกเครื่องที่อยากให้ข้อมูลตรงกัน')+
+        ? esc(sync.state==='err'?('ผิดพลาด — '+sync.msg):(sync.state==='busy'?'กำลังซิงก์…':'พร้อมใช้งาน'))+
+          (sync.at?' · ล่าสุด '+esc(new Date(sync.at).toLocaleString('th-TH')):'')
+        : 'วางลิงก์เดียวกันในทุกเครื่อง')+
     '</div></div></div></div>';
 
   h+='<div class="card"><div class="setsec">'+
-    lead('การแสดงผลบนหน้าจอนี้','เลือกว่าจะให้ตัวใหญ่อ่านง่าย หรือย่อให้เห็นทุกการ์ดในหน้าเดียว')+
+    lead('การแสดงผลบนหน้าจอนี้','')+
     '<div><div class="seg" id="viewseg">'+
       '<button data-view="auto" aria-pressed="'+(S.settings.view!=='wide')+'">มือถือ · ตัวใหญ่</button>'+
       '<button data-view="wide" aria-pressed="'+(S.settings.view==='wide')+'">เต็มหน้าจอ · เห็นทุกการ์ด</button>'+
-    '</div><div class="hint" style="margin-top:7px">โหมดเต็มหน้าจอจะย่อหน้าเว็บให้กว้างเท่าคอมพิวเตอร์ เห็นเมนูด้านซ้ายและการ์ดสองคอลัมน์พร้อมกัน ตัวหนังสือจะเล็กลง ซูมนิ้วขยายดูได้ · ตั้งค่านี้แยกของแต่ละเครื่อง</div></div></div></div>';
+    '</div></div></div></div>';
 
   h+='<div class="card"><div class="setsec">'+
-    lead('รายรับและรายการหัก','บันทึกรายรับหมวด “เงินเดือน” ครั้งเดียว ระบบหัก 3 รายการนี้ให้อัตโนมัติ — นอกจากนี้ไม่หักอะไรอีก')+
+    lead('รายรับและรายการหัก','บันทึกเงินเดือนครั้งเดียว ระบบหัก 3 รายการนี้ให้เอง')+
     '<div><div class="fgrid">'+fld('เงินเดือน','p.salary',p.salary)+fld('ประกันสังคม / เดือน','p.sso',p.sso)+
       fld('กองทุนสำรองเลี้ยงชีพ / เดือน','p.pvdM',p.pvdM)+fld('กยศ. / เดือน','p.kyst',p.kyst)+'</div>'+
       '<div style="margin-top:12px;padding:11px 13px;border:1px solid var(--line);border-radius:12px;display:flex;flex-wrap:wrap;gap:10px;align-items:baseline">'+
         '<span class="sm mut">เงินเดือนรอบนี้ <b class="num">'+m0(pl.gross)+'</b>'+(pl.auto?' <span class="fnt">(จากรายการที่บันทึก)</span>':'')+'</span>'+
         '<span class="sm neg">− หัก <b class="num">'+m0((+p.sso||0)+(+p.pvdM||0)+(+p.kyst||0))+'</b></span>'+
         '<span class="sm" style="margin-left:auto">เงินเดือนสุทธิ <b class="num">'+m0(pl.net)+'</b></span></div>'+
-      '<div class="hint" style="margin-top:7px">ช่อง “เงินเดือน” ด้านบนเป็นค่าตั้งต้นสำหรับวางแผน — พอบันทึกรายรับหมวด “เงินเดือน” ในรอบไหน ระบบจะใช้ยอดจริงของรอบนั้นแทนทันที ไม่ต้องมากรอกซ้ำ</div>'+
-      '<div class="hint" style="margin-top:7px">ทั้ง 3 รายการนี้จะถูกลงเป็น <b>รายจ่ายหมวด “หักจากเงินเดือน”</b> ให้อัตโนมัติในหน้ารายการ (แก้ยอดหรือลบทีหลังได้) · ค่าใช้จ่ายอื่น ๆ ระบบจะไม่หักให้ ต้องบันทึกเองตามยอดจริงของเดือนนั้น</div>'+
-      '<div class="hint" style="margin-top:7px">กองทุนสำรองเลี้ยงชีพ '+m0(p.pvdM)+' ที่หักจากเงินเดือน จะถูกบวกเข้าพอร์ตกองทุนให้ทุกเดือน พร้อมเงินสมทบนายจ้างอีก '+m0(p.pvd.employer)+' รวมเดือนละ '+m0(pvdMonthly())+' (เงินสมทบนายจ้างเป็นเงินเพิ่ม ไม่ได้หักจากเงินเดือนเรา)</div>'+
       '</div></div></div>';
 
   h+='<div class="card"><div class="setsec">'+
-    lead('ค่าใช้จ่ายประจำ (ไว้ดูเป็นแนวทาง)','ไม่ได้หักอัตโนมัติ — ยอดจริงแต่ละเดือนไม่เท่ากัน ให้บันทึกเองในหน้ารายการ · ที่ตั้งไว้รวม '+m0(pl.fixed))+
+    lead('ค่าใช้จ่ายประจำ (ไว้ดูเป็นแนวทาง)','ไม่ได้หักอัตโนมัติ · รวม '+m0(pl.fixed))+
     '<div><div class="fgrid">'+p.fixed.map(function(f){
       return '<div><label for="fx_'+f.id+'">'+esc(f.n)+'</label><div style="display:flex;gap:6px">'+
         '<input id="fx_'+f.id+'" type="number" inputmode="decimal" data-k="fixed" data-id="'+f.id+'" value="'+(+f.v||0)+'">'+
@@ -1304,15 +1335,14 @@ function vSet(){
     '<div style="margin-top:12px"><button class="btn sm ghost" data-a="addfix">＋ เพิ่มค่าใช้จ่ายประจำ</button></div></div></div></div>';
 
   h+='<div class="card"><div class="setsec">'+
-    lead('เป้าหมายรายเดือน','เป้าที่ตั้งใจเก็บ ไม่ได้หักอัตโนมัติ — บันทึกเองเมื่อโอนจริง · รวม '+m0(pl.save))+
+    lead('เป้าหมายรายเดือน','ไม่ได้หักอัตโนมัติ · รวม '+m0(pl.save))+
     '<div><div class="fgrid">'+fld('เก็บไปเที่ยว','p.plan.travel',p.plan.travel)+fld('เงินเก็บกับแฟน · ส่วนของเรา','p.plan.partner',p.plan.partner)+
       fld('เงินเก็บกับแฟน · ส่วนของแฟน','p.plan.partnerHer',p.plan.partnerHer)+
       fld('DCA ต่อเดือน','p.plan.dca',p.plan.dca)+fld('เก็บฉุกเฉิน','p.plan.emergency',p.plan.emergency)+'</div>'+
-      '<div class="hint" style="margin-top:7px">ยอด DCA นี้จะถูกแบ่งตามสัดส่วน % ที่ตั้งไว้ในหน้าพอร์ตลงทุนโดยอัตโนมัติ</div>'+
-      '<div class="hint" style="margin-top:7px">เงินเก็บกับแฟนรวมเดือนละ <b>'+m0(partnerMonthly())+'</b> เอาไปซื้อ <b>IVV</b> อย่างเดียว (ส่วนของแฟนเป็นเงินนอกเงินเดือนเรา จึงไม่ถูกนับเป็นรายจ่ายของเรา) · เงินต้นคิดจากจำนวนหุ้น IVV ที่กรอกไว้ในพอร์ต</div></div></div></div>';
+      '</div></div></div>';
 
   h+='<div class="card"><div class="setsec">'+
-    lead('กองทุนสำรองเลี้ยงชีพ',p.pvd.amc+' รหัสกองทุน '+p.pvd.code+' — เงินต้นและผลประโยชน์รวมอยู่ในมูลค่าพอร์ต')+
+    lead('กองทุนสำรองเลี้ยงชีพ',p.pvd.amc+' '+p.pvd.code)+
     '<div><div class="fgrid">'+fld('เงินต้นตั้งต้น (ก่อนวันเริ่มบันทึก)','p.pvd.principal',p.pvd.principal)+
       fld('ผลประโยชน์ / ผลตอบแทน (%)','p.pvd.ret',p.pvd.ret)+
       fld('เงินสะสมของเรา / เดือน (หักจากเงินเดือน)','p.pvdM',p.pvdM)+
@@ -1326,10 +1356,10 @@ function vSet(){
         ' <span class="fnt">(ตั้งต้น '+m0(p.pvd.principal)+' + '+monthsSinceStart()+' เดือน × '+m0(pvdMonthly())+')</span></div>'+
         '<div class="sm" style="margin-top:3px">มูลค่ารวม <b class="num">'+m0(pvdValue())+'</b> '+
         ((+p.pvd.units||0)>0&&(+p.pvd.nav||0)>0?'<span class="fnt">คิดจากหน่วย × NAV</span>':'<span class="fnt">คิดจากเงินต้น × ผลตอบแทน</span>')+'</div></div>'+
-      '<div class="hint" style="margin-top:7px">ถ้ากรอกทั้ง NAV และจำนวนหน่วย ระบบจะใช้ หน่วย × NAV แทนการคิดจากเปอร์เซ็นต์</div></div></div></div>';
+      '</div></div></div>';
 
   h+='<div class="card"><div class="setsec">'+
-    lead('ยอดปัจจุบัน','ใส่เฉพาะ “ยอดตั้งต้น” ก่อนเริ่มใช้แอป — หลังจากนี้บันทึกรายการแบบเงินเก็บ ระบบจะบวกสะสมให้เอง')+
+    lead('ยอดปัจจุบัน','ใส่ยอดตั้งต้นครั้งเดียว หลังจากนั้นระบบสะสมให้เอง')+
     '<div class="fgrid">'+fld('เงินสด / เงินในบัญชี (นับรวมเป็นเงินฉุกเฉิน)','p.bal.cash',p.bal.cash)+
       fld('เงินฉุกเฉิน · ยอดตั้งต้น (รวมตอนนี้ '+m0(balEmg())+')','p.bal.emergency',p.bal.emergency)+
       fld('เป้าหมายเงินฉุกเฉิน','p.bal.emergencyTarget',p.bal.emergencyTarget)+
@@ -1337,16 +1367,16 @@ function vSet(){
       fld('หนี้คงเหลือ','p.bal.debt',p.bal.debt)+
       '<div><label for="f_p_bal_wht">ภาษีหัก ณ ที่จ่าย (ยอดตั้งต้น)</label>'+
         '<input id="f_p_bal_wht" type="number" inputmode="decimal" step="0.01" data-path="p.bal.wht" value="'+(+p.bal.wht||0)+'">'+
-        '<div class="hint" style="margin-top:5px">ยอดที่ถูกหักก่อนเริ่มใช้แอป · ครั้งต่อไปให้บันทึกผ่านหมวด “ภาษีหัก ณ ที่จ่าย” ในรายจ่าย รวมสะสมตอนนี้ '+m0(whtTotal())+'</div></div>'+
+        '<div class="hint" style="margin-top:5px">รวมสะสม '+m0(whtTotal())+'</div></div>'+
       '</div></div></div>';
 
   h+='<div class="card"><div class="setsec">'+
-    lead('วันเริ่มบันทึก','ก่อนวันนี้ระบบจะไม่นับรายรับ–รายจ่ายและไม่สรุปยอดย้อนหลัง')+
+    lead('วันเริ่มบันทึก','ก่อนวันนี้ระบบจะไม่นับยอดย้อนหลัง')+
     '<div class="fgrid"><div><label for="f_start">เริ่มบันทึกวันที่</label>'+
       '<input id="f_start" type="date" data-start="1" value="'+esc(startD())+'"></div>'+
       '<div><label>สถานะ</label><div class="pill" style="margin-top:6px">'+(started()?'เริ่มบันทึกแล้ว':'จะเริ่ม '+dLabel(startD()))+'</div></div>'+
     '</div>'+
-    '<div class="hint" style="margin-top:9px"><b>รอบเดือนนับตามวันเงินเดือน</b> — แต่ละรอบเริ่มที่วันทำการสุดท้ายของเดือนก่อน ไปจนถึงก่อนวันทำการสุดท้ายของเดือนนั้น ถ้าวันสุดท้ายของเดือนตรงกับเสาร์–อาทิตย์ ระบบจะเลื่อนมาเป็นวันศุกร์ให้เอง<br>รอบปัจจุบัน: <b>'+esc(periodLabel(V.mk))+'</b> ('+activeDays(V.mk)+' วัน)</div>'+
+    '<div class="hint" style="margin-top:9px">รอบปัจจุบัน <b>'+esc(periodLabel(V.mk))+'</b> · '+activeDays(V.mk)+' วัน</div>'+
     '</div></div>';
 
   h+='<div class="card"><div class="setsec">'+
@@ -1375,16 +1405,8 @@ function vSet(){
       '<button class="btn ghost" data-a="restore">นำเข้าข้อมูล</button>'+
     '</div></div></div>';
 
-  h+='<div class="card"><div class="setsec">'+
-    lead('ติดตั้งเป็นแอปบนมือถือ','ให้เปิดใช้ได้จากหน้าจอหลักเหมือนแอปจริง')+
-    '<div><ol class="steps">'+
-      '<li>เปิดหน้านี้ด้วย <b>Chrome</b> บนมือถือ</li>'+
-      '<li>ถ้ามีปุ่ม <b>ติดตั้งแอป</b> ให้กดปุ่มนั้น (ขึ้นเฉพาะเวอร์ชันที่โฮสต์เอง) ไอคอนจะเป็นของเราล้วน ๆ</li>'+
-      '<li>ถ้าไม่มีปุ่ม ให้กด ⋮ มุมขวาบน แล้วเลือก <b>เพิ่มลงในหน้าจอหลัก</b> — วิธีนี้ Android จะแปะตรา Chrome ที่มุมไอคอนเสมอ</li>'+
-    '</ol><div class="hint" style="margin-top:10px">อยากได้ไอคอนไม่มีตรา Chrome ให้ใช้ชุดไฟล์ PWA (index.html + manifest + service worker + ไอคอน) อัปขึ้น GitHub Pages ตามคู่มือใน README</div></div></div></div>';
-
   h+='<div class="card"><div class="setsec" style="grid-template-columns:1fr"><div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">'+
-    '<span class="hint">ตัวเลขทุกช่องแก้ไขได้ตลอด บันทึกอัตโนมัติเมื่อออกจากช่อง</span>'+
+    '<span class="hint">แก้ตัวเลขได้ทุกช่อง บันทึกอัตโนมัติ</span>'+
     '<span style="margin-left:auto"><button class="btn deep" data-tab="home">ดูภาพรวม</button></span></div></div></div>';
   return h;
 }
@@ -1511,9 +1533,7 @@ function buySheet(){
   if(pre)d=BUYSEED_DATE;
   var opts=(S.cats.invest||[]).map(function(c){
     return '<option value="'+c.id+'"'+(c.id==='v1'?' selected':'')+'>'+esc(c.e+' '+c.n)+'</option>'}).join('');
-  var body='<div class="hint">วางรายการซื้อจากแอปโบรกเกอร์ บรรทัดละ 1 ตัว เรียงเป็น '+
-      '<b>ชื่อย่อ · จำนวนเงินบาท · ราคาที่ได้จริง · จำนวนหุ้น</b> (เว้นวรรคหรือคอมมาก็ได้)<br>'+
-      'ระบบจะบวกจำนวนหุ้นเข้าพอร์ต คิดต้นทุนเฉลี่ยให้ใหม่ และลงรายการลงทุนตามจำนวนเงินให้เอง</div>'+
+  var body='<div class="hint">บรรทัดละ 1 ตัว: <b>ชื่อย่อ · เงินบาท · ราคา · จำนวนหุ้น</b></div>'+
     '<div><label for="bt">รายการซื้อ</label>'+
       '<textarea id="bt" rows="9" spellcheck="false" style="font-family:\'IBM Plex Mono\',monospace;font-size:13px" '+
       'placeholder="VOO 1999.99 700.87 0.0852939">'+esc(pre)+'</textarea></div>'+
