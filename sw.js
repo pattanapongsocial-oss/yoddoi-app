@@ -1,5 +1,5 @@
 /* My Money service worker — เปิดใช้งานได้แม้ออฟไลน์ */
-var CACHE = 'yoddoi-v20';
+var CACHE = 'yoddoi-v21';
 var SHELL = ['./', './index.html', './manifest.webmanifest', './icon-192.png', './icon-512.png',
              './icon-maskable-192.png', './icon-maskable-512.png', './apple-touch-icon.png', './favicon.png'];
 self.addEventListener('install', function (e) {
@@ -12,6 +12,11 @@ self.addEventListener('activate', function (e) {
 });
 self.addEventListener('fetch', function (e) {
   if (e.request.method !== 'GET') return;
+  var url;
+  try { url = new URL(e.request.url); } catch (err) { return; }
+  /* แตะเฉพาะไฟล์ของแอปเอง — คำขอราคาหุ้นและอัตราแลกเปลี่ยนต้องวิ่งออกเน็ตตรง ๆ
+     ไม่งั้นเวลาแหล่งข้อมูลล่ม service worker จะคืนหน้าเว็บ (HTML) กลับไปแทน JSON */
+  if (url.origin !== self.location.origin) return;
   e.respondWith(
     caches.match(e.request).then(function (hit) {
       return hit || fetch(e.request).then(function (res) {
