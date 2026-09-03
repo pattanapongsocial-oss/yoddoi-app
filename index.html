@@ -334,6 +334,7 @@ function seed(){
       fixed:[{id:'f1',n:'ค่าหอ',v:0},{id:'f2',n:'ค่ามือถือ',v:0},{id:'f3',n:'ใช้หนี้',v:0},
              {id:'f4',n:'ผ่อนคอม',v:0},{id:'f5',n:'ค่ากิน (ฟิกซ์)',v:0},{id:'f6',n:'ค่าใช้จ่ายอื่นๆ',v:0}],
       plan:{travel:0,partner:0,partnerHer:0,dca:0,emergency:0},
+      partnerSym:'QQQM',
       pvd:{principal:0,ret:0,amc:'KBANK',code:'PF3103',nav:0,units:0,navDate:'',employer:0},
       bal:{cash:0,emergency:0,emergencyTarget:0,travel:0,partner:0,debt:0,wht:0}
     },
@@ -394,8 +395,6 @@ function migrate(s){
     var tt=s.dca.reduce(function(a,d){return a+(+d.v||0)},0)||1;
     s.dca.forEach(function(d){d.pct=Math.round((+d.v||0)/tt*1000)/10;delete d.v;});
   }
-  if(s.holdings&&!s.holdings.some(function(h){return (h.symbol||'').toUpperCase()==='IVV'}))
-    s.holdings.push({id:'h_ivv',symbol:'IVV',name:'iShares Core S&P 500 ETF · เงินเก็บกับแฟน',qty:0,cost:0,price:0,cur:'USD',updated:'',tag:'partner'});
   s.v=4;
   s.cats=s.cats||base.cats;
   s.cats.saving=s.cats.saving||base.cats.saving;
@@ -406,6 +405,16 @@ function migrate(s){
   s.profile.pvd=s.profile.pvd||base.profile.pvd;
   s.profile.fixed=s.profile.fixed||base.profile.fixed;
   s.dca=s.dca||base.dca;s.tx=s.tx||[];s.goals=s.goals||[];s.holdings=s.holdings||[];s.names=s.names||{};
+  if(!s.profile.partnerSym)s.profile.partnerSym='QQQM';
+  var PSYM=(s.profile.partnerSym||'QQQM').toUpperCase();
+  /* ช่องที่ระบบเคยสร้างให้เป็น IVV และยังไม่มีหุ้นเลย เปลี่ยนชื่อเป็นตัวใหม่ให้ ไม่ต้องมาลบเอง */
+  (s.holdings||[]).forEach(function(h){
+    if(h.tag==='partner'&&!(+h.qty>0)&&(h.symbol||'').toUpperCase()!==PSYM){
+      h.symbol=PSYM;h.name=PSYM+' · เงินเก็บกับแฟน';h.price=0;h.cost=0;h.updated='';
+    }
+  });
+  if(s.holdings&&!s.holdings.some(function(h){return (h.symbol||'').toUpperCase()===PSYM}))
+    s.holdings.push({id:'h_ptn',symbol:PSYM,name:PSYM+' · เงินเก็บกับแฟน',qty:0,cost:0,price:0,cur:'USD',updated:'',tag:'partner'});
   if(s.profile.plan.partnerHer===undefined)s.profile.plan.partnerHer=(+s.profile.plan.partner||0);
   /* เงินเก็บกับแฟนอยู่ในหุ้น IVV ล้วน ไม่มีส่วนที่เป็นเงินสด */
   if(!s.pv5){s.profile.bal.partner=0;s.pv5=1}
@@ -577,6 +586,7 @@ var SYMN={VOO:'Vanguard S&P 500 ETF',IVV:'iShares Core S&P 500 ETF',SPY:'SPDR S&
   MSFT:'Microsoft Corporation',AMD:'Advanced Micro Devices',MU:'Micron Technology, Inc.',
   RKLB:'Rocket Lab Corporation',CRCL:'Circle Internet Group, Inc.',
   SPCX:'Space Exploration Technologies (SpaceX)',
+  QQQM:'Invesco NASDAQ-100 ETF',
   'BRK.B':'Berkshire Hathaway Inc. Class B','BRK-B':'Berkshire Hathaway Inc. Class B',
   SGOV:'iShares 0-3 Month Treasury Bond ETF',
   AVGO:'Broadcom Inc.',TSM:'Taiwan Semiconductor (TSMC)',NFLX:'Netflix, Inc.',
@@ -593,9 +603,10 @@ function rememberName(sym,n){
   if(!n)return;var s=(sym||'').trim().toUpperCase().replace(/\.BK$/,'');
   S.names=S.names||{};if(S.names[s]!==n){S.names[s]=n;return true}return false;
 }
-/* ผูกกับหุ้น IVV โดยตรง (หรือรายการที่ทำเครื่องหมายว่าเป็นของแฟนไว้) */
-function partnerHoldings(){return S.holdings.filter(function(h){
-  return (h.symbol||'').trim().toUpperCase()==='IVV'||h.tag==='partner';})}
+/* ผูกกับตัวย่อที่ตั้งไว้ในหน้าตั้งค่า (หรือรายการที่ทำเครื่องหมายว่าเป็นของแฟนไว้) */
+function partnerSym(){return (S.profile.partnerSym||'QQQM').trim().toUpperCase()}
+function partnerHoldings(){var ps=partnerSym();return S.holdings.filter(function(h){
+  return (h.symbol||'').trim().toUpperCase()===ps||h.tag==='partner';})}
 /* เงินเก็บที่บันทึกเป็นรายการ “เงินเก็บ” จะสะสมเข้ายอดของเป้าหมายนั้นเองอัตโนมัติ */
 function savedCat(cid){return sum(S.tx.filter(function(t){return t.type==='saving'&&t.cat===cid&&t.date>=startD()}),function(t){return t.amount})}
 function balOf(k,cid){return (+S.profile.bal[k]||0)+savedCat(cid)}
@@ -1021,6 +1032,13 @@ function vHome(){
   var topShare=w.assets>0&&buckets.length?Math.round(buckets[0].v/w.assets*100):0;
   h+=donutCard('เงินอยู่ตรงไหน','<span class="num sm mut">'+m0(w.assets)+'</span>',
       buckets,topShare?topShare+'%':'—',buckets.length?buckets[0].n:'',130);
+  var eg=b.emergencyTarget>0?Math.min(100,balEmg()/b.emergencyTarget*100):0;
+  h+='<div class="card" style="margin-top:-6px"><div class="pad" style="padding-top:12px">'+
+    '<div style="display:flex;font-size:12px;color:var(--muted)"><span>เงินฉุกเฉิน '+eg.toFixed(0)+'% ของเป้า</span>'+
+      '<b class="num" style="margin-left:auto;color:var(--ink)">'+m0(b.emergencyTarget)+'</b></div>'+
+    '<div class="track" style="margin-top:7px"><i style="width:'+eg.toFixed(1)+'%"></i></div>'+
+    '<div class="xs fnt" style="margin-top:8px">เงินเก็บกับแฟนอยู่ในหุ้น <b>'+esc(partnerSym())+'</b> · ใส่เดือนละ '+m0(partnerMonthly())+'</div>'+
+    '</div></div>';
 
   /* ── 4. พอร์ตหุ้น ──────────────────────────────────── */
   var hold=p.rows.map(function(r){return {n:r.h.symbol,v:r.valThb,c:pc(holdIx(r.h))}});
@@ -1102,10 +1120,10 @@ function statCard(sym,lab,val,cls,sub){
 }
 function partnerSub(){
   var hs=partnerHoldings();
-  if(!hs.length)return 'ยังไม่มี IVV ในพอร์ต · เพิ่มในหน้าพอร์ตลงทุน';
+  if(!hs.length)return 'ยังไม่มี '+partnerSym()+' ในพอร์ต · เพิ่มในหน้าพอร์ตลงทุน';
   var q=sum(hs,function(h){return +h.qty||0}),pr=hs[0].price||0;
-  if(!(q>0))return 'IVV 0 หุ้น · ใส่จำนวนหุ้นในหน้าพอร์ตลงทุน';
-  return 'IVV '+qty(q)+' หุ้น × '+money(pr,hs[0].cur)+' · เดือนละ '+m0(partnerMonthly());
+  if(!(q>0))return partnerSym()+' 0 หุ้น · ใส่จำนวนหุ้นในหน้าพอร์ตลงทุน';
+  return partnerSym()+' '+qty(q)+' หุ้น × '+money(pr,hs[0].cur)+' · เดือนละ '+m0(partnerMonthly());
 }
 function miniGoal(n,saved,sub){
   return '<div style="border:1px solid var(--line);border-radius:13px;padding:11px 12px">'+
@@ -1250,7 +1268,7 @@ function vYear(){
         miniBox('พอร์ตหุ้น',m0(w.port.val),'DCA '+m0(dcaTotal())+' / เดือน',SERIES[0])+
         miniBox('กองทุนสำรองฯ',m0(w.pvd),'เข้าเดือนละ '+m0(pvdMonthly()),SERIES[2])+
         miniBox('ภาษีหัก ณ ที่จ่าย',m0(whtTotal()),'ขอคืนได้ตอนยื่นภาษี',SERIES[4])+
-        miniBox('เงินเก็บกับแฟน',m0(partnerValue()),'IVV · เดือนละ '+m0(partnerMonthly()),SERIES[3])+
+        miniBox('เงินเก็บกับแฟน',m0(partnerValue()),partnerSym()+' · เดือนละ '+m0(partnerMonthly()),SERIES[3])+
       '</div></div></div>'+
   '</div>';
   return h;
@@ -1440,6 +1458,9 @@ function vSet(){
     lead('เป้าหมายรายเดือน','ไม่ได้หักอัตโนมัติ · รวม '+m0(pl.save))+
     '<div><div class="fgrid">'+fld('เก็บไปเที่ยว','p.plan.travel',p.plan.travel)+fld('เงินเก็บกับแฟน · ส่วนของเรา','p.plan.partner',p.plan.partner)+
       fld('เงินเก็บกับแฟน · ส่วนของแฟน','p.plan.partnerHer',p.plan.partnerHer)+
+      '<div><label for="f_psym">เงินเก็บกับแฟน · ซื้อหุ้นตัวไหน</label>'+
+        '<input id="f_psym" type="text" data-psym="1" value="'+esc(partnerSym())+'" placeholder="QQQM">'+
+        '<div class="hint" style="margin-top:5px">'+esc(symName(partnerSym())||'—')+'</div></div>'+
       fld('DCA ต่อเดือน','p.plan.dca',p.plan.dca)+fld('เก็บฉุกเฉิน','p.plan.emergency',p.plan.emergency)+'</div>'+
       '</div></div></div>';
 
@@ -1907,6 +1928,17 @@ document.addEventListener('change',function(e){
   if(i.dataset&&i.dataset.start){
     S.settings.startDate=i.value||'2026-09-01';
     if(V.mk<startMk())V.mk=startMk();
+    commit();return;
+  }
+  if(i.dataset&&i.dataset.psym){
+    var ns=(i.value||'').trim().toUpperCase();if(!ns)return;
+    S.profile.partnerSym=ns;
+    S.holdings.forEach(function(h){
+      if(h.tag==='partner'&&!(+h.qty>0)&&(h.symbol||'').toUpperCase()!==ns){
+        h.symbol=ns;h.name=(symName(ns)||ns)+' · เงินเก็บกับแฟน';h.price=0;h.cost=0;h.updated='';}
+    });
+    if(!S.holdings.some(function(h){return (h.symbol||'').toUpperCase()===ns}))
+      S.holdings.push({id:uid(),symbol:ns,name:(symName(ns)||ns)+' · เงินเก็บกับแฟน',qty:0,cost:0,price:0,cur:'USD',updated:'',tag:'partner'});
     commit();return;
   }
   if(i.dataset&&i.dataset.path){setPath(i.dataset.path,+i.value||0);touch();softRefresh();}
